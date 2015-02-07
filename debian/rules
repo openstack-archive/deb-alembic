@@ -1,6 +1,15 @@
 #!/usr/bin/make -f
 
-VERSION=0.6.5
+DEBVERS         ?= $(shell dpkg-parsechangelog | sed -n -e 's/^Version: //p')
+VERSION         ?= $(shell echo '$(DEBVERS)' | sed -e 's/^[[:digit:]]*://' -e 's/[-].*//')
+DEBFLAVOR       ?= $(shell dpkg-parsechangelog | grep -E ^Distribution: | cut -d" " -f2)
+DEBPKGNAME      ?= $(shell dpkg-parsechangelog | grep -E ^Source: | cut -d" " -f2)
+UPSTREAM_GIT    ?= git://github.com/openstack/$(DEBPKGNAME).git
+GIT_TAG         ?= $(shell echo '$(VERSION)' | sed -e 's/~/_/')
+MANIFEST_EXCLUDE_STANDARD ?= $(DEBPKGNAME)
+DEBIAN_BRANCH   ?= $(shell cat debian/gbp.conf | grep debian-branch | cut -d'=' -f2 | awk '{print $1}')
+
+VERSION=0.7.4
 PYVERS:=$(shell pyversions -vr)
 export PYBUILD_NAME=alembic
 
