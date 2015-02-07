@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+
+VERSION=0.6.5
+PYVERS:=$(shell pyversions -vr)
+export PYBUILD_NAME=alembic
+
+%:
+	dh $@ --with=python2,python3,sphinxdoc --buildsystem=pybuild
+
+override_dh_auto_build:
+	dh_auto_build
+	http_proxy='localhost' make -C docs/build html
+
+override_dh_auto_clean:
+	dh_auto_clean
+	make -C docs/build clean
+	rm -rf build
+
+override_dh_auto_install:
+	dh_auto_install
+	mv debian/python-alembic/usr/bin debian/alembic/usr/
+	rm -rf debian/python3-alembic/usr/bin/
+
+get-orig-source:
+	wget http://pypi.python.org/packages/source/a/alembic/alembic-$(VERSION).tar.gz
+	tar xvzf alembic-$(VERSION).tar.gz
+	rm alembic-$(VERSION).tar.gz
+	rm -rf alembic-$(VERSION)/docs/*.html alembic-$(VERSION)/docs/*.js alembic-$(VERSION)/docs/*.inv alembic-$(VERSION)/docs/_sources alembic-$(VERSION)/docs/_images alembic-$(VERSION)/docs/_static
+	mv alembic-$(VERSION) alembic-$(VERSION).orig
+	tar czfv alembic_$(VERSION)+ds.orig.tar.gz alembic-$(VERSION).orig
+	rm -rf alembic-$(VERSION).orig
+
+help2man:
+	help2man --version-string=$(VERSION) -n "lightweight database migration tool for usage with the SQLAlchemy" -N alembic > alembic.1
+	sed -i "s/,\(\w\)/, \1/g" alembic.1

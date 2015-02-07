@@ -1,0 +1,123 @@
+alembic (0.7.4+ds-1) experimental; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Thomas Goirand <zigo@debian.org>  Sat, 07 Feb 2015 22:44:22 +0100
+
+alembic (0.6.5+ds-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release.
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 28 Jul 2014 10:08:57 +0000
+
+alembic (0.6.3+ds-2) unstable; urgency=medium
+
+  * Add python-alembic and python3-alembic binary packages (Closes: 721169),
+    alembic binary package now provides /usr/bin/alembic and documentation
+  * Use pybuild build system, add dh-python to Build-Depends
+
+ -- Piotr Ożarowski <piotr@debian.org>  Thu, 13 Mar 2014 08:47:33 +0100
+
+alembic (0.6.3+ds-1) unstable; urgency=medium
+
+  * Team upload
+  * New upstream release
+  * Upldate get-orig-source target in debian/rules, upstream tarball doesn't
+    contain distribute_setup.py anymore
+  * Add python-changelog and python-sphinx-paramlinks to Build-Depends - used
+    while building docs now; drop 01disable_sphinx_changelog_ext patch
+
+ -- Piotr Ożarowski <piotr@debian.org>  Mon, 24 Feb 2014 20:31:38 +0100
+
+alembic (0.6.2+ds-1) unstable; urgency=low
+
+  [ Jackson Doak ]
+  * New upstream release (closes: #734021)
+  * Incorporate NMU changes
+  * debian/control: 
+    - Bump standards-version to 3.9.5
+    - Add X-Python-Version
+  * Add doc-base
+
+  [ Thomas Bechtold ]
+  * Team upload.
+  * debian/patches: Add 01disable_sphinx_changelog_ext.patch to disable Sphinx
+    changelog extension which is currently not packaged for Debian.
+  * debian/control: Add python-mock to Build-Depends according to setup.py.
+  * debian/rules: Add http_proxy='localhost' to disable internet access during
+    documentation build.
+  * debian/alembic.1: Updated with help2man target from debian/rules.
+
+ -- Thomas Bechtold <toabctl@debian.org>  Fri, 03 Jan 2014 08:25:50 +0100
+
+alembic (0.4.2+ds-3.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Restore changes from 0.4.2+ds-2.1 that were dropped in -3 (closes: #715429).
+
+ -- Julien Cristau <jcristau@debian.org>  Thu, 12 Sep 2013 20:14:35 +0200
+
+alembic (0.4.2+ds-3) unstable; urgency=low
+
+  * Team upload.
+  * Rebuliding so that it handles the new version of sqlalchemy.
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 08 Jul 2013 15:30:56 +0000
+
+alembic (0.4.2+ds-2.1) unstable; urgency=low
+
+  * Non maintainer upload
+  * Remove build-dependency and suggestion on python2.6-argparse.
+    Closes: #707804.
+
+ -- Matthias Klose <doko@debian.org>  Thu, 16 May 2013 14:38:51 +0200
+
+alembic (0.4.2+ds-2) unstable; urgency=low
+
+  [ Jakub Wilk ]
+  * Use canonical URIs for Vcs-* fields.
+
+  [ Thomas Goirand ]
+  * Uploading to SID.
+  * Added rm -rf build so that the package can be built twice.
+
+ -- Thomas Goirand <zigo@debian.org>  Sat, 11 May 2013 02:34:02 +0000
+
+alembic (0.4.2+ds-1) experimental; urgency=low
+
+  * Team upload.
+  * New upstream release.
+  * Uploading to experimental (during Wheezy freeze).
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 14 Feb 2013 14:40:33 +0000
+
+alembic (0.3.4+ds-3) unstable; urgency=low
+
+  * Team upload
+  * Build-depend on python2.6-argparse to support python2.6 tests
+   (Closes: #680854)
+  * Suggest python2.6-argparse as it is needed to run with python2.6, but
+    multiple depends require python2.7 to be installed - running with
+    python2.6 should be very unusual and pulling in the non-standard argparse
+    on all installations for this is not a good thing
+  * Fix copy/paste error in debian/changelog from previous upload
+
+ -- Scott Kitterman <scott@kitterman.com>  Mon, 16 Jul 2012 15:42:34 -0400
+
+alembic (0.3.4+ds-2) unstable; urgency=low
+
+  * Team upload
+  * Drop python3-sphinx as an alternate build-depend to python-sphinx to fix
+    FTBFS (Closes: #680855
+    - The package only has a python version anyway, so python3-sphinx as a
+      build-dep is clearly wrong
+
+ -- Scott Kitterman <scott@kitterman.com>  Mon, 16 Jul 2012 14:51:28 -0400
+
+alembic (0.3.4+ds-1) unstable; urgency=low
+
+  * Initial release. (Closes: #669404)
+
+ -- Matthias Kümmerer <matthias@matthias-k.org>  Wed, 06 Jun 2012 17:29:23 +0200

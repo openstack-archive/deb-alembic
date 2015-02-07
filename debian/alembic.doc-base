@@ -1,0 +1,9 @@
+Document: alembic
+Title: Alembic Manual
+Author: Emil Brink
+Abstract: This manual describes what Alembic is, and how it can be used.
+Section: Data Management
+
+Format: HTML
+Index: /usr/share/doc/alembic/html/index.html
+Files: /usr/share/doc/alembic/html/*.html
