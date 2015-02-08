@@ -1,0 +1,17 @@
+Description: Do not use intersphinx
+ Avoids network connection during build.
+Author: Thomas Goirand <zigo@debian.org>
+Forwarded: not-needed
+Last-Update: 2015-02-08
+
+--- alembic-0.7.4.orig/docs/build/conf.py
++++ alembic-0.7.4/docs/build/conf.py
+@@ -30,7 +30,7 @@ import alembic
+ 
+ # Add any Sphinx extension module names here, as strings. They can be extensions
+ # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
+-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.intersphinx',
++extensions = ['sphinx.ext.autodoc',
+                 'changelog', 'sphinx_paramlinks']
+ 
+ # tags to sort on inside of sections
