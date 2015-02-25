@@ -9,6 +9,7 @@ alembic (0.7.4-1) experimental; urgency=medium
   * Removed now useless X-Python-Version: >= 2.6.
   * Standards-Version is now 3.9.6.
   * Increased debhelper and compat to 9.
+  * Added past maintainers to debian/copyright.
 
  -- Thomas Goirand <zigo@debian.org>  Sat, 07 Feb 2015 22:44:22 +0100
 

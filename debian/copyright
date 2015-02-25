@@ -4,11 +4,16 @@ Upstream-Contact: Mike Bayer
 Source: http://pypi.python.org/pypi/alembic
 
 Files: *
-Copyright: 2009-2012, Michael Bayer
+Copyright: 2009-2015, Michael Bayer
 License: MIT
 
 Files: debian/*
-Copyright: 2012, Matthias Kümmerer <matthias@matthias-k.org>
+Copyright: (c) 2012, Matthias Kümmerer <matthias@matthias-k.org>
+           (c) 2012, Scott Kitterman <scott@kitterman.com>
+           (c) 2013, Matthias Klose <doko@debian.org>
+           (c) 2014, Thomas Bechtold <toabctl@debian.org>
+           (c) 2014, Piotr Ożarowski <piotr@debian.org>
+           (c) 2013-2015, Thomas Goirand <zigo@debian.org>
 License: MIT
 
 License: MIT
