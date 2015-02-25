@@ -20,7 +20,7 @@ Build-Depends: debhelper (>= 8),
                python3-nose,
                python3-setuptools,
                python3-sqlalchemy
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 Vcs-Browser: http://anonscm.debian.org/cgit/openstack/alembic.git
 Vcs-Git: git://anonscm.debian.org/openstack/alemgic.git
 Homepage: http://www.bitbucket.org/zzzeek/alembic
