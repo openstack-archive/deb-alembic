@@ -1,8 +1,10 @@
 alembic (0.7.4-1) experimental; urgency=medium
 
-  * Team upload.
   * New upstream release.
   * Now generating the orig.tar.xz out of a git tag.
+  * Taking over the package after the original maintainer wrote by email he
+    can't maintain the package anymore. Added Piotr as maintainer as he
+    also expressed interest in the package, as he maintains SQLAlchemy.
 
  -- Thomas Goirand <zigo@debian.org>  Sat, 07 Feb 2015 22:44:22 +0100
 

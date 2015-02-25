@@ -1,10 +1,10 @@
 Source: alembic
 Section: python
 Priority: optional
-Maintainer: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
-Uploaders: Matthias Kümmerer <matthias@matthias-k.org>
-Vcs-Browser: http://anonscm.debian.org/viewvc/python-modules/packages/alembic/trunk/
-Vcs-Svn: svn://anonscm.debian.org/python-modules/packages/alembic/trunk/
+Maintainer: PKG OpenStack <openstack-devel@lists.alioth.debian.org>
+Uploaders: Thomas Goirand <zigo@debian.org>, Piotr Ożarowski <piotr@debian.org>
+Vcs-Browser: http://anonscm.debian.org/cgit/openstack/alembic.git
+Vcs-Git: git://anonscm.debian.org/openstack/alemgic.git
 Standards-Version: 3.9.5
 Homepage: http://www.bitbucket.org/zzzeek/alembic
 Build-Depends: debhelper (>= 8), dh-python,
