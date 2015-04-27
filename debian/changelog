@@ -2,6 +2,7 @@ alembic (0.7.4-2) unstable; urgency=medium
 
   * Uploading to unstable.
   * Dropped version in the python-sphinx build-depends.
+  * Moved some Build-Depends to a new Build-Depends-Indep.
 
  -- Thomas Goirand <zigo@debian.org>  Mon, 27 Apr 2015 07:04:43 +0000
 
