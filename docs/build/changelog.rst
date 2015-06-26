@@ -4,6 +4,166 @@ Changelog
 ==========
 
 .. changelog::
+    :version: 0.7.6
+    :released: May 5, 2015
+
+    .. change::
+      :tags: feature, versioning
+      :tickets: 297
+
+      Fixed bug where the case of multiple mergepoints that all
+      have the identical set of ancestor revisions would fail to be
+      upgradable, producing an assertion failure.   Merge points were
+      previously assumed to always require at least an UPDATE in
+      alembic_revision from one of the previous revs to the new one,
+      however in this case, if one of the mergepoints has already
+      been reached, the remaining mergepoints have no row to UPDATE therefore
+      they must do an INSERT of their target version.
+
+    .. change::
+      :tags: feature, autogenerate
+      :tickets: 296
+
+      Added support for type comparison functions to be not just per
+      environment, but also present on the custom types themselves, by
+      supplying a method ``compare_against_backend``.
+      Added a new documentation section :ref:`compare_types` describing
+      type comparison fully.
+
+    .. change::
+      :tags: feature, operations
+      :tickets: 255
+
+      Added a new option
+      :paramref:`.EnvironmentContext.configure.literal_binds`, which
+      will pass the ``literal_binds`` flag into the compilation of SQL
+      constructs when using "offline" mode.  This has the effect that
+      SQL objects like inserts, updates, deletes as well as textual
+      statements sent using ``text()`` will be compiled such that the dialect
+      will attempt to render literal values "inline" automatically.
+      Only a subset of types is typically supported; the
+      :meth:`.Operations.inline_literal` construct remains as the construct
+      used to force a specific literal representation of a value.
+      The :paramref:`.EnvironmentContext.configure.literal_binds` flag
+      is added to the "offline" section of the ``env.py`` files generated
+      in new environments.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 289
+
+      Fully implemented the
+      :paramref:`~.Operations.batch_alter_table.copy_from` parameter for
+      batch mode, which previously was not functioning.  This allows
+      "batch mode" to be usable in conjunction with ``--sql``.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 287
+
+      Repaired support for the :meth:`.BatchOperations.create_index`
+      directive, which was mis-named internally such that the operation
+      within a batch context could not proceed.   The create index
+      operation will proceed as part of a larger "batch table recreate"
+      operation only if
+      :paramref:`~.Operations.batch_alter_table.recreate` is set to
+      "always", or if the batch operation includes other instructions that
+      require a table recreate.
+
+
+.. changelog::
+    :version: 0.7.5
+    :released: March 19, 2015
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 266
+      :pullreq: bitbucket:39
+
+      The ``--autogenerate`` option is not valid when used in conjunction
+      with "offline" mode, e.g. ``--sql``.  This now raises a ``CommandError``,
+      rather than failing more deeply later on.  Pull request courtesy
+      Johannes Erdfelt.
+
+    .. change::
+      :tags: bug, operations, mssql
+      :tickets: 284
+
+      Fixed bug where the mssql DROP COLUMN directive failed to include
+      modifiers such as "schema" when emitting the DDL.
+
+    .. change::
+      :tags: bug, autogenerate, postgresql
+      :tickets: 282
+
+      Postgresql "functional" indexes are necessarily skipped from the
+      autogenerate process, as the SQLAlchemy backend currently does not
+      support reflection of these structures.   A warning is emitted
+      both from the SQLAlchemy backend as well as from the Alembic
+      backend for Postgresql when such an index is detected.
+
+    .. change::
+      :tags: bug, autogenerate, mysql
+      :tickets: 276
+
+      Fixed bug where MySQL backend would report dropped unique indexes
+      and/or constraints as both at the same time.  This is because
+      MySQL doesn't actually have a "unique constraint" construct that
+      reports differently than a "unique index", so it is present in both
+      lists.  The net effect though is that the MySQL backend will report
+      a dropped unique index/constraint as an index in cases where the object
+      was first created as a unique constraint, if no other information
+      is available to make the decision.  This differs from other backends
+      like Postgresql which can report on unique constraints and
+      unique indexes separately.
+
+    .. change::
+      :tags: bug, commands
+      :tickets: 269
+
+      Fixed bug where using a partial revision identifier as the
+      "starting revision" in ``--sql`` mode in a downgrade operation
+      would fail to resolve properly.
+
+      As a side effect of this change, the
+      :meth:`.EnvironmentContext.get_starting_revision_argument`
+      method will return the "starting" revision in its originally-
+      given "partial" form in all cases, whereas previously when
+      running within the :meth:`.command.stamp` command, it would have
+      been resolved to a full number before passing it to the
+      :class:`.EnvironmentContext`.  The resolution of this value to
+      a real revision number has basically been moved to a more fundamental
+      level within the offline migration process.
+
+    .. change::
+      :tags: feature, commands
+
+      Added a new feature :attr:`.Config.attributes`, to help with the use
+      case of sharing state such as engines and connections on the outside
+      with a series of Alembic API calls; also added a new cookbook section
+      to describe this simple but pretty important use case.
+
+      .. seealso::
+
+          :ref:`connection_sharing`
+
+    .. change::
+      :tags: feature, environment
+
+      The format of the default ``env.py`` script has been refined a bit;
+      it now uses context managers not only for the scope of the transaction,
+      but also for connectivity from the starting engine.  The engine is also
+      now called a "connectable" in support of the use case of an external
+      connection being passed in.
+
+    .. change::
+      :tags: feature, versioning
+      :tickets: 267
+
+      Added support for "alembic stamp" to work when given "heads" as an
+      argument, when multiple heads are present.
+
+.. changelog::
     :version: 0.7.4
     :released: January 12, 2015
 

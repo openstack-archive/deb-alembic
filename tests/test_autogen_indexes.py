@@ -1,10 +1,11 @@
 import sys
 from alembic.testing import TestBase
 from alembic.testing import config
+from alembic.testing import assertions
 
 from sqlalchemy import MetaData, Column, Table, Integer, String, \
     Numeric, UniqueConstraint, Index, ForeignKeyConstraint,\
-    ForeignKey
+    ForeignKey, func
 from alembic.testing import engines
 from alembic.testing import eq_
 from alembic.testing.env import staging_env
@@ -36,6 +37,8 @@ class NoUqReflection(object):
 
 class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
     reports_unique_constraints = True
+    reports_unique_constraints_as_indexes = False
+
     __requires__ = ('unique_constraint_reflection', )
     __only_on__ = 'sqlite'
 
@@ -441,8 +444,17 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
                      ('x' in obj.name) if obj.name is not None else False)
                     for cmd, obj in diffs)
         if self.reports_unnamed_constraints:
-            assert ("remove_constraint", True) in diffs
-            assert ("add_constraint", False) in diffs
+            if self.reports_unique_constraints_as_indexes:
+                eq_(
+                    diffs,
+                    set([("remove_index", True), ("add_constraint", False)])
+                )
+            else:
+                eq_(
+                    diffs,
+                    set([("remove_constraint", True),
+                         ("add_constraint", False)])
+                )
 
     def test_remove_named_unique_index(self):
         m1 = MetaData()
@@ -453,14 +465,14 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
               Index('xidx', 'x', unique=True)
               )
         Table('remove_idx', m2,
-              Column('x', Integer),
+              Column('x', Integer)
               )
 
         diffs = self._fixture(m1, m2)
 
         if self.reports_unique_constraints:
             diffs = set((cmd, obj.name) for cmd, obj in diffs)
-            assert ("remove_index", "xidx") in diffs
+            eq_(diffs, set([("remove_index", "xidx")]))
         else:
             eq_(diffs, [])
 
@@ -479,8 +491,11 @@ class AutogenerateUniqueIndexTest(AutogenFixtureTest, TestBase):
         diffs = self._fixture(m1, m2)
 
         if self.reports_unique_constraints:
-            diffs = ((cmd, obj.name) for cmd, obj in diffs)
-            assert ("remove_constraint", "xidx") in diffs
+            diffs = set((cmd, obj.name) for cmd, obj in diffs)
+            if self.reports_unique_constraints_as_indexes:
+                eq_(diffs, set([("remove_index", "xidx")]))
+            else:
+                eq_(diffs, set([("remove_constraint", "xidx")]))
         else:
             eq_(diffs, [])
 
@@ -625,9 +640,35 @@ class PGUniqueIndexTest(AutogenerateUniqueIndexTest):
         eq_(diffs[0][1].name, "uq_name")
         eq_(len(diffs), 1)
 
+    def test_functional_ix(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        t1 = Table(
+            'foo', m1,
+            Column('id', Integer, primary_key=True),
+            Column('email', String(50))
+        )
+        Index("email_idx", func.lower(t1.c.email), unique=True)
+
+        t2 = Table(
+            'foo', m2,
+            Column('id', Integer, primary_key=True),
+            Column('email', String(50))
+        )
+        Index("email_idx", func.lower(t2.c.email), unique=True)
+
+        with assertions.expect_warnings(
+                "Skipped unsupported reflection",
+                "autogenerate skipping functional index"
+        ):
+            diffs = self._fixture(m1, m2)
+        eq_(diffs, [])
+
 
 class MySQLUniqueIndexTest(AutogenerateUniqueIndexTest):
     reports_unnamed_constraints = True
+    reports_unique_constraints_as_indexes = True
     __only_on__ = 'mysql'
 
     def test_removed_idx_index_named_as_column(self):
@@ -638,7 +679,6 @@ class MySQLUniqueIndexTest(AutogenerateUniqueIndexTest):
             assert True
         else:
             assert False, "unexpected success"
-
 
 
 class NoUqReflectionIndexTest(NoUqReflection, AutogenerateUniqueIndexTest):
@@ -765,6 +805,7 @@ class IncludeHooksTest(AutogenFixtureTest, TestBase):
         eq_(len(diffs), 1)
 
     @config.requirements.unique_constraint_reflection
+    @config.requirements.reflects_unique_constraints_unambiguously
     def test_remove_connection_uq(self):
         m1 = MetaData()
         m2 = MetaData()

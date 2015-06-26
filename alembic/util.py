@@ -27,6 +27,7 @@ def _safe_int(value):
 _vers = tuple(
     [_safe_int(x) for x in re.findall(r'(\d+|[abc]\d)', __version__)])
 sqla_07 = _vers > (0, 7, 2)
+sqla_079 = _vers >= (0, 7, 9)
 sqla_08 = _vers >= (0, 8, 0)
 sqla_083 = _vers >= (0, 8, 3)
 sqla_084 = _vers >= (0, 8, 4)
@@ -322,7 +323,7 @@ class memoized_property(object):
 
     def __get__(self, obj, cls):
         if obj is None:
-            return None
+            return self
         obj.__dict__[self.__name__] = result = self.fget(obj)
         return result
 

@@ -296,6 +296,7 @@ class EnvironmentContext(object):
                   compare_type=False,
                   compare_server_default=False,
                   render_item=None,
+                  literal_binds=False,
                   upgrade_token="upgrades",
                   downgrade_token="downgrades",
                   alembic_module_prefix="op.",
@@ -365,6 +366,24 @@ class EnvironmentContext(object):
          object.
         :param output_encoding: when using ``--sql`` to generate SQL
          scripts, apply this encoding to the string output.
+        :param literal_binds: when using ``--sql`` to generate SQL
+         scripts, pass through the ``literal_binds`` flag to the compiler
+         so that any literal values that would ordinarily be bound
+         parameters are converted to plain strings.
+
+         .. warning:: Dialects can typically only handle simple datatypes
+            like strings and numbers for auto-literal generation.  Datatypes
+            like dates, intervals, and others may still require manual
+            formatting, typically using :meth:`.Operations.inline_literal`.
+
+         .. note:: the ``literal_binds`` flag is ignored on SQLAlchemy
+            versions prior to 0.8 where this feature is not supported.
+
+         .. versionadded:: 0.7.6
+
+         .. seealso::
+
+            :meth:`.Operations.inline_literal`
 
         :param starting_rev: Override the "starting revision" argument
          when using ``--sql`` mode.
@@ -398,37 +417,13 @@ class EnvironmentContext(object):
          operation.  Defaults to ``False`` which disables type
          comparison.  Set to
          ``True`` to turn on default type comparison, which has varied
-         accuracy depending on backend.
-
-         To customize type comparison behavior, a callable may be
-         specified which
-         can filter type comparisons during an autogenerate operation.
-         The format of this callable is::
-
-            def my_compare_type(context, inspected_column,
-                        metadata_column, inspected_type, metadata_type):
-                # return True if the types are different,
-                # False if not, or None to allow the default implementation
-                # to compare these types
-                return None
-
-            context.configure(
-                # ...
-                compare_type = my_compare_type
-            )
-
-
-         ``inspected_column`` is a :class:`sqlalchemy.schema.Column` as
-         returned by
-         :meth:`sqlalchemy.engine.reflection.Inspector.reflecttable`,
-         whereas ``metadata_column`` is a
-         :class:`sqlalchemy.schema.Column` from the local model
-         environment.
-
-         A return value of ``None`` indicates to allow default type
-         comparison to proceed.
+         accuracy depending on backend.   See :ref:`compare_types`
+         for an example as well as information on other type
+         comparison options.
 
          .. seealso::
+
+            :ref:`compare_types`
 
             :paramref:`.EnvironmentContext.configure.compare_server_default`
 
@@ -700,6 +695,7 @@ class EnvironmentContext(object):
         opts['sqlalchemy_module_prefix'] = sqlalchemy_module_prefix
         opts['alembic_module_prefix'] = alembic_module_prefix
         opts['user_module_prefix'] = user_module_prefix
+        opts['literal_binds'] = literal_binds
         if render_item is not None:
             opts['render_item'] = render_item
         if compare_type is not None:

@@ -242,19 +242,27 @@ class Operations(object):
 
         .. note::  The table copy operation will currently not copy
            CHECK constraints, and may not copy UNIQUE constraints that are
-           unnamed, as is possible on SQLite.
+           unnamed, as is possible on SQLite.   See the section
+           :ref:`sqlite_batch_constraints` for workarounds.
 
         :param table_name: name of table
         :param schema: optional schema name.
         :param recreate: under what circumstances the table should be
          recreated. At its default of ``"auto"``, the SQLite dialect will
-         recreate the table if any operations other than ``add_column()`` are
+         recreate the table if any operations other than ``add_column()``,
+         ``create_index()``, or ``drop_index()`` are
          present. Other options include ``"always"`` and ``"never"``.
         :param copy_from: optional :class:`~sqlalchemy.schema.Table` object
          that will act as the structure of the table being copied.  If omitted,
          table reflection is used to retrieve the structure of the table.
 
+         .. versionadded:: 0.7.6 Fully implemented the
+            :paramref:`~.Operations.batch_alter_table.copy_from`
+            parameter.
+
          .. seealso::
+
+            :ref:`batch_offline_mode`
 
             :paramref:`~.Operations.batch_alter_table.reflect_args`
 
@@ -1189,6 +1197,12 @@ class Operations(object):
         See :meth:`.execute` for an example usage of
         :meth:`.inline_literal`.
 
+        The environment can also be configured to attempt to render
+        "literal" values inline automatically, for those simple types
+        that are supported by the dialect; see
+        :paramref:`.EnvironmentContext.configure.literal_binds` for this
+        more recently added feature.
+
         :param value: The value to render.  Strings, integers, and simple
          numerics should be supported.   Other types like boolean,
          dates, etc. may or may not be supported yet by various
@@ -1198,6 +1212,10 @@ class Operations(object):
          expressions, this is usually derived automatically
          from the Python type of the value itself, as well as
          based on the context in which the value is used.
+
+        .. seealso::
+
+            :paramref:`.EnvironmentContext.configure.literal_binds`
 
         """
         return impl._literal_bindparam(None, value, type_=type_)
@@ -1339,7 +1357,7 @@ class BatchOperations(Operations):
             self.impl.table_name, column_name, schema=self.impl.schema)
 
     def create_primary_key(self, name, cols):
-        """Issue a "create priamry key" instruction using the
+        """Issue a "create primary key" instruction using the
         current batch migration context.
 
         The batch form of this call omits the ``table_name`` and ``schema``
