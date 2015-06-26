@@ -2,6 +2,8 @@ alembic (0.7.6-1) unstable; urgency=medium
 
   * New upstream release.
   * Fixed watch file.
+  * Added patch to avoid FTBFS, as advised by upstream:
+    turn-on-the-mssql-legacy_schema_aliasing-flag-to-remove-warnings.patch
 
  -- Thomas Goirand <zigo@debian.org>  Fri, 26 Jun 2015 21:43:59 +0000
 
