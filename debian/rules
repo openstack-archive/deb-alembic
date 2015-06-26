@@ -10,7 +10,7 @@ GIT_TAG         ?= $(shell echo '$(VERSION)' | sed -e 's/~/_/')
 MANIFEST_EXCLUDE_STANDARD ?= $(DEBPKGNAME)
 DEBIAN_BRANCH   ?= $(shell cat debian/gbp.conf | grep debian-branch | cut -d'=' -f2 | awk '{print $1}')
 
-VERSION=0.7.4
+VERSION=0.7.6
 PYVERS:=$(shell pyversions -vr)
 export PYBUILD_NAME=alembic
 
