@@ -1,6 +1,7 @@
 alembic (0.7.6-1) unstable; urgency=medium
 
   * New upstream release.
+  * Fixed watch file.
 
  -- Thomas Goirand <zigo@debian.org>  Fri, 26 Jun 2015 21:43:59 +0000
 
