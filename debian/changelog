@@ -1,6 +1,7 @@
 alembic (0.7.6-2) unstable; urgency=medium
 
   * Added missing python-pytest build-depends (Closes: #796413).
+  * Removed build-depends on nose.
 
  -- Thomas Goirand <zigo@debian.org>  Tue, 25 Aug 2015 15:18:43 +0000
 
