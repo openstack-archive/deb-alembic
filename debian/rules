@@ -31,7 +31,7 @@ override_dh_install:
 	mv $(CURDIR)/debian/python-alembic/usr/bin/alembic $(CURDIR)/debian/python-alembic/usr/bin/python2-alembic
 	mv $(CURDIR)/debian/python3-alembic/usr/bin/alembic $(CURDIR)/debian/python3-alembic/usr/bin/python3-alembic
 
-override_dh_auto_tests:
+override_dh_auto_test:
 	nosetests -v
 	nosetests3 -v
 
