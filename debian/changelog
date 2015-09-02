@@ -1,6 +1,8 @@
 alembic (0.8.2-1) unstable; urgency=medium
 
   * New upstream release.
+  * Removed patch applied upstream:
+    - turn-on-the-mssql-legacy_schema_aliasing-flag-to-remove-warnings.patch
 
  -- Thomas Goirand <zigo@debian.org>  Wed, 02 Sep 2015 18:24:25 +0200
 
