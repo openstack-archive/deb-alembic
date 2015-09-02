@@ -3,6 +3,8 @@ alembic (0.8.2-1) unstable; urgency=medium
   * New upstream release.
   * Removed patch applied upstream:
     - turn-on-the-mssql-legacy_schema_aliasing-flag-to-remove-warnings.patch
+  * Switch away from pybuild: I simply don't understand how it works, and
+    there's no doc that I know of explaining the behavior.
 
  -- Thomas Goirand <zigo@debian.org>  Wed, 02 Sep 2015 18:24:25 +0200
 
