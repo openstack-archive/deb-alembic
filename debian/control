@@ -31,11 +31,10 @@ Homepage: http://www.bitbucket.org/zzzeek/alembic
 
 Package: alembic
 Architecture: all
-Depends: python-alembic,
+Depends: python-alembic | python3-alembic,
          ${misc:Depends},
          ${python:Depends},
          ${sphinxdoc:Depends},
-Suggests: python3-alembic,
 Description: lightweight database migration tool for SQLAlchemy
  Alembic is a new database migration tool, written by the author
  of SQLAlchemy. A migration tool offers the following functionality:

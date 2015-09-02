@@ -7,6 +7,8 @@ alembic (0.8.2-1) unstable; urgency=medium
     there's no doc that I know of explaining the behavior.
   * Using update-alternative for switching between python2 and 3 of
     /usr/bin/alembic.
+  * Allow alembic to be used with python3-alembic and not just
+    python-alembic (ie: Depends: python-alembic | python3-alembic).
 
  -- Thomas Goirand <zigo@debian.org>  Wed, 02 Sep 2015 18:24:25 +0200
 
