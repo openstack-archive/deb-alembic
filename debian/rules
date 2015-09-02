@@ -28,6 +28,8 @@ override_dh_install:
 			--root $(CURDIR)/debian/python3-alembic; \
 	done
 	rm -f $(CURDIR)/debian/python*/usr/lib/python*/dist-packages/*.pth
+	mv $(CURDIR)/debian/python-alembic/usr/bin/alembic $(CURDIR)/debian/python-alembic/usr/bin/python2-alembic
+	mv $(CURDIR)/debian/python3-alembic/usr/bin/alembic $(CURDIR)/debian/python3-alembic/usr/bin/python3-alembic
 
 override_dh_auto_tests:
 	nosetests -v
