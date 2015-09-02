@@ -1,23 +1,23 @@
 from contextlib import contextmanager
 import re
 
-import io
-
 from alembic.testing import exclusions
+from alembic.testing import assert_raises_message
 from alembic.testing import TestBase, eq_, config
 from alembic.testing.fixtures import op_fixture
 from alembic.testing import mock
 from alembic.operations import Operations
-from alembic.batch import ApplyBatchImpl
-from alembic.migration import MigrationContext
+from alembic.operations.batch import ApplyBatchImpl
+from alembic.runtime.migration import MigrationContext
 
 
 from sqlalchemy import Integer, Table, Column, String, MetaData, ForeignKey, \
     UniqueConstraint, ForeignKeyConstraint, Index, Boolean, CheckConstraint, \
     Enum
 from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.sql import column
+from sqlalchemy.sql import column, text
 from sqlalchemy.schema import CreateTable, CreateIndex
+from sqlalchemy import exc
 
 
 class BatchApplyTest(TestBase):
@@ -330,7 +330,7 @@ class BatchApplyTest(TestBase):
         impl = self._simple_fixture()
         col = Column('g', Integer)
         # operations.add_column produces a table
-        t = self.op._table('tname', col)  # noqa
+        t = self.op.schema_obj.table('tname', col)  # noqa
         impl.add_column('tname', col)
         new_table = self._assert_impl(impl, colnames=['id', 'x', 'y', 'g'])
         eq_(new_table.c.g.name, 'g')
@@ -420,7 +420,7 @@ class BatchApplyTest(TestBase):
     def test_add_fk(self):
         impl = self._simple_fixture()
         impl.add_column('tname', Column('user_id', Integer))
-        fk = self.op._foreign_key_constraint(
+        fk = self.op.schema_obj.foreign_key_constraint(
             'fk1', 'tname', 'user',
             ['user_id'], ['id'])
         impl.add_constraint(fk)
@@ -447,7 +447,7 @@ class BatchApplyTest(TestBase):
 
     def test_add_uq(self):
         impl = self._simple_fixture()
-        uq = self.op._unique_constraint(
+        uq = self.op.schema_obj.unique_constraint(
             'uq1', 'tname', ['y']
         )
 
@@ -459,7 +459,7 @@ class BatchApplyTest(TestBase):
     def test_drop_uq(self):
         impl = self._uq_fixture()
 
-        uq = self.op._unique_constraint(
+        uq = self.op.schema_obj.unique_constraint(
             'uq1', 'tname', ['y']
         )
         impl.drop_constraint(uq)
@@ -469,7 +469,7 @@ class BatchApplyTest(TestBase):
 
     def test_create_index(self):
         impl = self._simple_fixture()
-        ix = self.op._index('ix1', 'tname', ['y'])
+        ix = self.op.schema_obj.index('ix1', 'tname', ['y'])
 
         impl.create_index(ix)
         self._assert_impl(
@@ -479,7 +479,7 @@ class BatchApplyTest(TestBase):
     def test_drop_index(self):
         impl = self._ix_fixture()
 
-        ix = self.op._index('ix1', 'tname', ['y'])
+        ix = self.op.schema_obj.index('ix1', 'tname', ['y'])
         impl.drop_index(ix)
         self._assert_impl(
             impl, colnames=['id', 'x', 'y'],
@@ -498,12 +498,14 @@ class BatchAPITest(TestBase):
 
     @contextmanager
     def _fixture(self, schema=None):
-        migration_context = mock.Mock(opts={})
+        migration_context = mock.Mock(
+            opts={}, impl=mock.MagicMock(__dialect__='sqlite'))
         op = Operations(migration_context)
         batch = op.batch_alter_table(
             'tname', recreate='never', schema=schema).__enter__()
 
-        with mock.patch("alembic.operations.sa_schema") as mock_schema:
+        mock_schema = mock.MagicMock()
+        with mock.patch("alembic.operations.schemaobj.sa_schema", mock_schema):
             yield batch
         batch.impl.flush()
         self.mock_schema = mock_schema
@@ -625,6 +627,50 @@ class BatchAPITest(TestBase):
             batch.impl.operations.impl.mock_calls,
             [mock.call.add_constraint(
                 self.mock_schema.UniqueConstraint())]
+        )
+
+    def test_create_pk(self):
+        with self._fixture() as batch:
+            batch.create_primary_key('pk1', ['a', 'b'])
+
+        eq_(
+            self.mock_schema.Table().c.__getitem__.mock_calls,
+            [mock.call('a'), mock.call('b')]
+        )
+
+        eq_(
+            self.mock_schema.PrimaryKeyConstraint.mock_calls,
+            [
+                mock.call(
+                    self.mock_schema.Table().c.__getitem__(),
+                    self.mock_schema.Table().c.__getitem__(),
+                    name='pk1'
+                )
+            ]
+        )
+        eq_(
+            batch.impl.operations.impl.mock_calls,
+            [mock.call.add_constraint(
+                self.mock_schema.PrimaryKeyConstraint())]
+        )
+
+    def test_create_check(self):
+        expr = text("a > b")
+        with self._fixture() as batch:
+            batch.create_check_constraint('ck1', expr)
+
+        eq_(
+            self.mock_schema.CheckConstraint.mock_calls,
+            [
+                mock.call(
+                    expr, name="ck1"
+                )
+            ]
+        )
+        eq_(
+            batch.impl.operations.impl.mock_calls,
+            [mock.call.add_constraint(
+                self.mock_schema.CheckConstraint())]
         )
 
     def test_drop_constraint(self):
@@ -795,6 +841,25 @@ class BatchRoundTripTest(TestBase):
         context = MigrationContext.configure(self.conn)
         self.op = Operations(context)
 
+    def _no_pk_fixture(self):
+        nopk = Table(
+            'nopk', self.metadata,
+            Column('a', Integer),
+            Column('b', Integer),
+            Column('c', Integer),
+            mysql_engine='InnoDB'
+        )
+        nopk.create(self.conn)
+        self.conn.execute(
+            nopk.insert(),
+            [
+                {"a": 1, "b": 2, "c": 3},
+                {"a": 2, "b": 4, "c": 5},
+            ]
+
+        )
+        return nopk
+
     def tearDown(self):
         self.metadata.drop_all(self.conn)
         self.conn.close()
@@ -853,6 +918,32 @@ class BatchRoundTripTest(TestBase):
             {"id": 4, "x": 8},
             {"id": 5, "x": 9}
         ])
+
+    def test_add_pk_constraint(self):
+        self._no_pk_fixture()
+        with self.op.batch_alter_table("nopk", recreate="always") as batch_op:
+            batch_op.create_primary_key('newpk', ['a', 'b'])
+
+        pk_const = Inspector.from_engine(self.conn).get_pk_constraint('nopk')
+        with config.requirements.reflects_pk_names.fail_if():
+            eq_(pk_const['name'], 'newpk')
+        eq_(pk_const['constrained_columns'], ['a', 'b'])
+
+    @config.requirements.check_constraints_w_enforcement
+    def test_add_ck_constraint(self):
+        with self.op.batch_alter_table("foo", recreate="always") as batch_op:
+            batch_op.create_check_constraint("newck", text("x > 0"))
+
+        # we dont support reflection of CHECK constraints
+        # so test this by just running invalid data in
+        foo = self.metadata.tables['foo']
+
+        assert_raises_message(
+            exc.IntegrityError,
+            "newck",
+            self.conn.execute,
+            foo.insert(), {"id": 6, "data": 5, "x": -2}
+        )
 
     @config.requirements.sqlalchemy_094
     @config.requirements.unnamed_constraints

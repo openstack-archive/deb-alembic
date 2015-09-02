@@ -12,13 +12,13 @@
 
 """
 from __future__ import absolute_import
-from alembic.compat import py33
+from ..util.compat import py33
 
 if py33:
-    from unittest.mock import MagicMock, Mock, call, patch
+    from unittest.mock import MagicMock, Mock, call, patch, ANY
 else:
     try:
-        from mock import MagicMock, Mock, call, patch  # noqa
+        from mock import MagicMock, Mock, call, patch, ANY  # noqa
     except ImportError:
         raise ImportError(
             "SQLAlchemy's test suite requires the "

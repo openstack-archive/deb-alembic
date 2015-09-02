@@ -2,7 +2,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import types as sqltypes
 from sqlalchemy import schema
 
-from ..compat import string_types
+from ..util.compat import string_types
 from .. import util
 from .impl import DefaultImpl
 from .base import ColumnNullable, ColumnName, ColumnDefault, \
@@ -23,11 +23,12 @@ class MySQLImpl(DefaultImpl):
                      name=None,
                      type_=None,
                      schema=None,
-                     autoincrement=None,
                      existing_type=None,
                      existing_server_default=None,
                      existing_nullable=None,
-                     existing_autoincrement=None
+                     autoincrement=None,
+                     existing_autoincrement=None,
+                     **kw
                      ):
         if name is not None:
             self._exec(
@@ -157,6 +158,29 @@ class MySQLImpl(DefaultImpl):
             elif overlap not in metadata_ix_names:
                 conn_indexes.discard(conn_ix_names[overlap])
 
+    def correct_for_autogen_foreignkeys(self, conn_fks, metadata_fks):
+        conn_fk_by_sig = dict(
+            (compare._fk_constraint_sig(fk).sig, fk) for fk in conn_fks
+        )
+        metadata_fk_by_sig = dict(
+            (compare._fk_constraint_sig(fk).sig, fk) for fk in metadata_fks
+        )
+
+        for sig in set(conn_fk_by_sig).intersection(metadata_fk_by_sig):
+            mdfk = metadata_fk_by_sig[sig]
+            cnfk = conn_fk_by_sig[sig]
+            # MySQL considers RESTRICT to be the default and doesn't
+            # report on it.  if the model has explicit RESTRICT and
+            # the conn FK has None, set it to RESTRICT
+            if mdfk.ondelete is not None and \
+                    mdfk.ondelete.lower() == 'restrict' and \
+                    cnfk.ondelete is None:
+                cnfk.ondelete = 'RESTRICT'
+            if mdfk.onupdate is not None and \
+                    mdfk.onupdate.lower() == 'restrict' and \
+                    cnfk.onupdate is None:
+                cnfk.onupdate = 'RESTRICT'
+
 
 class MySQLAlterDefault(AlterColumn):
 
@@ -284,3 +308,5 @@ def _mysql_drop_constraint(element, compiler, **kw):
         raise NotImplementedError(
             "No generic 'DROP CONSTRAINT' in MySQL - "
             "please specify constraint type")
+
+

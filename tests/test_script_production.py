@@ -1,15 +1,21 @@
 from alembic.testing.fixtures import TestBase
-from alembic.testing import eq_, ne_, is_, assert_raises_message
+from alembic.testing import eq_, ne_, assert_raises_message, is_
 from alembic.testing.env import clear_staging_env, staging_env, \
     _get_staging_directory, _no_sql_testing_config, env_file_fixture, \
     script_file_fixture, _testing_config, _sqlite_testing_config, \
-    three_rev_fixture, _multi_dir_testing_config
+    three_rev_fixture, _multi_dir_testing_config, write_script,\
+    _sqlite_file_db, _multidb_testing_config
 from alembic import command
 from alembic.script import ScriptDirectory
 from alembic.environment import EnvironmentContext
+from alembic.testing import mock
 from alembic import util
+from alembic.operations import ops
+from alembic import autogenerate
 import os
 import datetime
+import sqlalchemy as sa
+from sqlalchemy.engine.reflection import Inspector
 
 env, abc, def_ = None, None, None
 
@@ -211,6 +217,501 @@ class RevisionCommandTest(TestBase):
             r"section\?",
             command.revision,
             self.cfg, message="some message", branch_label="foobar"
+        )
+
+
+class CustomizeRevisionTest(TestBase):
+    def setUp(self):
+        self.env = staging_env()
+        self.cfg = _multi_dir_testing_config()
+        self.cfg.set_main_option("revision_environment", "true")
+
+        script = ScriptDirectory.from_config(self.cfg)
+        self.model1 = util.rev_id()
+        self.model2 = util.rev_id()
+        self.model3 = util.rev_id()
+        for model, name in [
+            (self.model1, "model1"),
+            (self.model2, "model2"),
+            (self.model3, "model3"),
+        ]:
+            script.generate_revision(
+                model, name, refresh=True,
+                version_path=os.path.join(_get_staging_directory(), name),
+                head="base")
+
+            write_script(script, model, """\
+"%s"
+revision = '%s'
+down_revision = None
+branch_labels = ['%s']
+
+from alembic import op
+
+def upgrade():
+    pass
+
+def downgrade():
+    pass
+
+""" % (name, model, name))
+
+    def tearDown(self):
+        clear_staging_env()
+
+    def _env_fixture(self, fn, target_metadata):
+        self.engine = engine = _sqlite_file_db()
+
+        def run_env(self):
+            from alembic import context
+
+            with engine.connect() as connection:
+                context.configure(
+                    connection=connection,
+                    target_metadata=target_metadata,
+                    process_revision_directives=fn)
+                with context.begin_transaction():
+                    context.run_migrations()
+
+        return mock.patch(
+            "alembic.script.base.ScriptDirectory.run_env",
+            run_env
+        )
+
+    def test_new_locations_no_autogen(self):
+        m = sa.MetaData()
+
+        def process_revision_directives(context, rev, generate_revisions):
+            generate_revisions[:] = [
+                ops.MigrationScript(
+                    util.rev_id(),
+                    ops.UpgradeOps(),
+                    ops.DowngradeOps(),
+                    version_path=os.path.join(
+                        _get_staging_directory(), "model1"),
+                    head="model1@head"
+                ),
+                ops.MigrationScript(
+                    util.rev_id(),
+                    ops.UpgradeOps(),
+                    ops.DowngradeOps(),
+                    version_path=os.path.join(
+                        _get_staging_directory(), "model2"),
+                    head="model2@head"
+                ),
+                ops.MigrationScript(
+                    util.rev_id(),
+                    ops.UpgradeOps(),
+                    ops.DowngradeOps(),
+                    version_path=os.path.join(
+                        _get_staging_directory(), "model3"),
+                    head="model3@head"
+                ),
+            ]
+
+        with self._env_fixture(process_revision_directives, m):
+            revs = command.revision(self.cfg, message="some message")
+
+        script = ScriptDirectory.from_config(self.cfg)
+
+        for rev, model in [
+            (revs[0], "model1"),
+            (revs[1], "model2"),
+            (revs[2], "model3"),
+        ]:
+            rev_script = script.get_revision(rev.revision)
+            eq_(
+                rev_script.path,
+                os.path.abspath(os.path.join(
+                    _get_staging_directory(), model,
+                    "%s_.py" % (rev_script.revision, )
+                ))
+            )
+            assert os.path.exists(rev_script.path)
+
+    def test_renders_added_directives_no_autogen(self):
+        m = sa.MetaData()
+
+        def process_revision_directives(context, rev, generate_revisions):
+            generate_revisions[0].upgrade_ops.ops.append(
+                ops.CreateIndexOp("some_index", "some_table", ["a", "b"])
+            )
+
+        with self._env_fixture(process_revision_directives, m):
+            rev = command.revision(
+                self.cfg, message="some message", head="model1@head", sql=True)
+
+        with mock.patch.object(rev.module, "op") as op_mock:
+            rev.module.upgrade()
+        eq_(
+            op_mock.mock_calls,
+            [mock.call.create_index(
+                'some_index', 'some_table', ['a', 'b'], unique=False)]
+        )
+
+    def test_autogen(self):
+        m = sa.MetaData()
+        sa.Table('t', m, sa.Column('x', sa.Integer))
+
+        def process_revision_directives(context, rev, generate_revisions):
+            existing_upgrades = generate_revisions[0].upgrade_ops
+            existing_downgrades = generate_revisions[0].downgrade_ops
+
+            # model1 will run the upgrades, e.g. create the table,
+            # model2 will run the downgrades as upgrades, e.g. drop
+            # the table again
+
+            generate_revisions[:] = [
+                ops.MigrationScript(
+                    util.rev_id(),
+                    existing_upgrades,
+                    ops.DowngradeOps(),
+                    version_path=os.path.join(
+                        _get_staging_directory(), "model1"),
+                    head="model1@head"
+                ),
+                ops.MigrationScript(
+                    util.rev_id(),
+                    ops.UpgradeOps(ops=existing_downgrades.ops),
+                    ops.DowngradeOps(),
+                    version_path=os.path.join(
+                        _get_staging_directory(), "model2"),
+                    head="model2@head"
+                )
+            ]
+
+        with self._env_fixture(process_revision_directives, m):
+            command.upgrade(self.cfg, "heads")
+
+            eq_(
+                Inspector.from_engine(self.engine).get_table_names(),
+                ["alembic_version"]
+            )
+
+            command.revision(
+                self.cfg, message="some message",
+                autogenerate=True)
+
+            command.upgrade(self.cfg, "model1@head")
+
+            eq_(
+                Inspector.from_engine(self.engine).get_table_names(),
+                ["alembic_version", "t"]
+            )
+
+            command.upgrade(self.cfg, "model2@head")
+
+            eq_(
+                Inspector.from_engine(self.engine).get_table_names(),
+                ["alembic_version"]
+            )
+
+
+class ScriptAccessorTest(TestBase):
+    def test_upgrade_downgrade_ops_list_accessors(self):
+        u1 = ops.UpgradeOps(ops=[])
+        d1 = ops.DowngradeOps(ops=[])
+        m1 = ops.MigrationScript(
+            "somerev", u1, d1
+        )
+        is_(
+            m1.upgrade_ops, u1
+        )
+        is_(
+            m1.downgrade_ops, d1
+        )
+        u2 = ops.UpgradeOps(ops=[])
+        d2 = ops.DowngradeOps(ops=[])
+        m1._upgrade_ops.append(u2)
+        m1._downgrade_ops.append(d2)
+
+        assert_raises_message(
+            ValueError,
+            "This MigrationScript instance has a multiple-entry list for "
+            "UpgradeOps; please use the upgrade_ops_list attribute.",
+            getattr, m1, "upgrade_ops"
+        )
+        assert_raises_message(
+            ValueError,
+            "This MigrationScript instance has a multiple-entry list for "
+            "DowngradeOps; please use the downgrade_ops_list attribute.",
+            getattr, m1, "downgrade_ops"
+        )
+        eq_(m1.upgrade_ops_list, [u1, u2])
+        eq_(m1.downgrade_ops_list, [d1, d2])
+
+
+class ImportsTest(TestBase):
+    def setUp(self):
+        self.env = staging_env()
+        self.cfg = _sqlite_testing_config()
+
+    def tearDown(self):
+        clear_staging_env()
+
+    def _env_fixture(self, target_metadata):
+        self.engine = engine = _sqlite_file_db()
+
+        def run_env(self):
+            from alembic import context
+
+            with engine.connect() as connection:
+                context.configure(
+                    connection=connection,
+                    target_metadata=target_metadata)
+                with context.begin_transaction():
+                    context.run_migrations()
+
+        return mock.patch(
+            "alembic.script.base.ScriptDirectory.run_env",
+            run_env
+        )
+
+    def test_imports_in_script(self):
+        from sqlalchemy import MetaData, Table, Column
+        from sqlalchemy.dialects.mysql import VARCHAR
+
+        type_ = VARCHAR(20, charset='utf8', national=True)
+
+        m = MetaData()
+
+        Table(
+            't', m,
+            Column('x', type_)
+        )
+
+        with self._env_fixture(m):
+            rev = command.revision(
+                self.cfg, message="some message",
+                autogenerate=True)
+
+        with open(rev.path) as file_:
+            assert "from sqlalchemy.dialects import mysql" in file_.read()
+
+
+class MultiContextTest(TestBase):
+    """test the multidb template for autogenerate front-to-back"""
+
+    def setUp(self):
+        self.engine1 = _sqlite_file_db(tempname='eng1.db')
+        self.engine2 = _sqlite_file_db(tempname='eng2.db')
+        self.engine3 = _sqlite_file_db(tempname='eng3.db')
+
+        self.env = staging_env(template="multidb")
+        self.cfg = _multidb_testing_config({
+            "engine1": self.engine1,
+            "engine2": self.engine2,
+            "engine3": self.engine3
+        })
+
+    def _write_metadata(self, meta):
+        path = os.path.join(_get_staging_directory(), 'scripts', 'env.py')
+        with open(path) as env_:
+            existing_env = env_.read()
+        existing_env = existing_env.replace(
+            "target_metadata = {}",
+            meta)
+        with open(path, "w") as env_:
+            env_.write(existing_env)
+
+    def tearDown(self):
+        clear_staging_env()
+
+    def test_autogen(self):
+        self._write_metadata(
+            """
+import sqlalchemy as sa
+
+m1 = sa.MetaData()
+m2 = sa.MetaData()
+m3 = sa.MetaData()
+target_metadata = {"engine1": m1, "engine2": m2, "engine3": m3}
+
+sa.Table('e1t1', m1, sa.Column('x', sa.Integer))
+sa.Table('e2t1', m2, sa.Column('y', sa.Integer))
+sa.Table('e3t1', m3, sa.Column('z', sa.Integer))
+
+"""
+        )
+
+        rev = command.revision(
+            self.cfg, message="some message",
+            autogenerate=True
+        )
+        with mock.patch.object(rev.module, "op") as op_mock:
+            rev.module.upgrade_engine1()
+            eq_(
+                op_mock.mock_calls[-1],
+                mock.call.create_table('e1t1', mock.ANY)
+            )
+            rev.module.upgrade_engine2()
+            eq_(
+                op_mock.mock_calls[-1],
+                mock.call.create_table('e2t1', mock.ANY)
+            )
+            rev.module.upgrade_engine3()
+            eq_(
+                op_mock.mock_calls[-1],
+                mock.call.create_table('e3t1', mock.ANY)
+            )
+            rev.module.downgrade_engine1()
+            eq_(
+                op_mock.mock_calls[-1],
+                mock.call.drop_table('e1t1')
+            )
+            rev.module.downgrade_engine2()
+            eq_(
+                op_mock.mock_calls[-1],
+                mock.call.drop_table('e2t1')
+            )
+            rev.module.downgrade_engine3()
+            eq_(
+                op_mock.mock_calls[-1],
+                mock.call.drop_table('e3t1')
+            )
+
+
+class RewriterTest(TestBase):
+    def test_all_traverse(self):
+        writer = autogenerate.Rewriter()
+
+        mocker = mock.Mock(side_effect=lambda context, revision, op: op)
+        writer.rewrites(ops.MigrateOperation)(mocker)
+
+        addcolop = ops.AddColumnOp(
+            't1', sa.Column('x', sa.Integer())
+        )
+
+        directives = [
+            ops.MigrationScript(
+                util.rev_id(),
+                ops.UpgradeOps(ops=[
+                    ops.ModifyTableOps('t1', ops=[
+                        addcolop
+                    ])
+                ]),
+                ops.DowngradeOps(ops=[
+                ]),
+            )
+        ]
+
+        ctx, rev = mock.Mock(), mock.Mock()
+        writer(ctx, rev, directives)
+        eq_(
+            mocker.mock_calls,
+            [
+                mock.call(ctx, rev, directives[0]),
+                mock.call(ctx, rev, directives[0].upgrade_ops),
+                mock.call(ctx, rev, directives[0].upgrade_ops.ops[0]),
+                mock.call(ctx, rev, addcolop),
+                mock.call(ctx, rev, directives[0].downgrade_ops),
+            ]
+        )
+
+    def test_double_migrate_table(self):
+        writer = autogenerate.Rewriter()
+
+        idx_ops = []
+
+        @writer.rewrites(ops.ModifyTableOps)
+        def second_table(context, revision, op):
+            return [
+                op,
+                ops.ModifyTableOps('t2', ops=[
+                    ops.AddColumnOp('t2', sa.Column('x', sa.Integer()))
+                ])
+            ]
+
+        @writer.rewrites(ops.AddColumnOp)
+        def add_column(context, revision, op):
+            idx_op = ops.CreateIndexOp('ixt', op.table_name, [op.column.name])
+            idx_ops.append(idx_op)
+            return [
+                op,
+                idx_op
+            ]
+
+        directives = [
+            ops.MigrationScript(
+                util.rev_id(),
+                ops.UpgradeOps(ops=[
+                    ops.ModifyTableOps('t1', ops=[
+                        ops.AddColumnOp('t1', sa.Column('x', sa.Integer()))
+                    ])
+                ]),
+                ops.DowngradeOps(ops=[]),
+            )
+        ]
+
+        ctx, rev = mock.Mock(), mock.Mock()
+        writer(ctx, rev, directives)
+        eq_(
+            [d.table_name for d in directives[0].upgrade_ops.ops],
+            ['t1', 't2']
+        )
+        is_(
+            directives[0].upgrade_ops.ops[0].ops[1],
+            idx_ops[0]
+        )
+        is_(
+            directives[0].upgrade_ops.ops[1].ops[1],
+            idx_ops[1]
+        )
+
+    def test_chained_ops(self):
+        writer1 = autogenerate.Rewriter()
+        writer2 = autogenerate.Rewriter()
+
+        @writer1.rewrites(ops.AddColumnOp)
+        def add_column_nullable(context, revision, op):
+            if op.column.nullable:
+                return op
+            else:
+                op.column.nullable = True
+                return [
+                    op,
+                    ops.AlterColumnOp(
+                        op.table_name,
+                        op.column.name,
+                        modify_nullable=False,
+                        existing_type=op.column.type,
+                    )
+                ]
+
+        @writer2.rewrites(ops.AddColumnOp)
+        def add_column_idx(context, revision, op):
+            idx_op = ops.CreateIndexOp('ixt', op.table_name, [op.column.name])
+            return [
+                op,
+                idx_op
+            ]
+
+        directives = [
+            ops.MigrationScript(
+                util.rev_id(),
+                ops.UpgradeOps(ops=[
+                    ops.ModifyTableOps('t1', ops=[
+                        ops.AddColumnOp(
+                            't1', sa.Column('x', sa.Integer(), nullable=False))
+                    ])
+                ]),
+                ops.DowngradeOps(ops=[]),
+            )
+        ]
+
+        ctx, rev = mock.Mock(), mock.Mock()
+        writer1.chain(writer2)(ctx, rev, directives)
+
+        eq_(
+            autogenerate.render_python_code(directives[0].upgrade_ops),
+            "### commands auto generated by Alembic - please adjust! ###\n"
+            "    op.add_column('t1', "
+            "sa.Column('x', sa.Integer(), nullable=True))\n"
+            "    op.create_index('ixt', 't1', ['x'], unique=False)\n"
+            "    op.alter_column('t1', 'x',\n"
+            "               existing_type=sa.Integer(),\n"
+            "               nullable=False)\n"
+            "    ### end Alembic commands ###"
         )
 
 

@@ -1,6 +1,6 @@
 import re
 
-from .. import compat
+from ..util import compat
 from .. import util
 from .base import compiles, alter_table, format_table_name, RenameTable
 from .impl import DefaultImpl
@@ -23,7 +23,8 @@ class PostgresqlImpl(DefaultImpl):
 
     def prep_table_for_batch(self, table):
         for constraint in table.constraints:
-            self.drop_constraint(constraint)
+            if constraint.name is not None:
+                self.drop_constraint(constraint)
 
     def compare_server_default(self, inspector_column,
                                metadata_column,

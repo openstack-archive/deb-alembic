@@ -1,7 +1,8 @@
 from alembic.testing.fixtures import TestBase
 from alembic.testing import eq_, assert_raises_message
-from alembic.revision import RevisionMap, Revision, MultipleHeads, \
+from alembic.script.revision import RevisionMap, Revision, MultipleHeads, \
     RevisionError
+from . import _large_map
 
 
 class APITest(TestBase):
@@ -92,6 +93,23 @@ class APITest(TestBase):
             ]
         )
         eq_(map_.get_revision('base'), None)
+
+    def test_iterate_tolerates_dupe_targets(self):
+        map_ = RevisionMap(
+            lambda: [
+                Revision('a', ()),
+                Revision('b', ('a',)),
+                Revision('c', ('b',)),
+            ]
+        )
+
+        eq_(
+            [
+                r.revision for r in
+                map_._iterate_revisions(('c', 'c'), 'a')
+            ],
+            ['c', 'b', 'a']
+        )
 
 
 class DownIterateTest(TestBase):
@@ -619,6 +637,17 @@ class BranchTravellingTest(DownIterateTest):
             inclusive=False
         )
 
+    def test_ancestor_nodes(self):
+        merge = self.map.get_revision("merge")
+        eq_(
+            set(
+                rev.revision
+                for rev in self.map._get_ancestor_nodes([merge], check=True)
+            ),
+            set(['a1', 'e2b2', 'e2b1', 'cb2', 'merge',
+                'a3', 'a2', 'b1', 'b2', 'db1', 'db2', 'cb1'])
+        )
+
 
 class MultipleBaseTest(DownIterateTest):
     def setUp(self):
@@ -831,7 +860,7 @@ class MultipleBaseCrossDependencyTestTwo(DownIterateTest):
                 Revision('b1', 'a1'),
                 Revision('c1', 'b1'),
 
-                Revision('base2', (), dependencies='base1', branch_labels='b_2'),
+                Revision('base2', (), dependencies='b_1', branch_labels='b_2'),
                 Revision('a2', 'base2'),
                 Revision('b2', 'a2'),
                 Revision('c2', 'b2'),
@@ -901,3 +930,56 @@ class MultipleBaseCrossDependencyTestTwo(DownIterateTest):
             ['d3', 'c3', 'b3', 'a3', 'base3']
         )
 
+
+class LargeMapTest(DownIterateTest):
+    def setUp(self):
+        self.map = _large_map.map_
+
+    def test_all(self):
+        raw = [r for r in self.map._revision_map.values() if r is not None]
+
+        revs = [
+            rev for rev in
+            self.map.iterate_revisions(
+                "heads", "base"
+            )
+        ]
+
+        eq_(set(raw), set(revs))
+
+        for idx, rev in enumerate(revs):
+            ancestors = set(
+                self.map._get_ancestor_nodes([rev])).difference([rev])
+            descendants = set(
+                self.map._get_descendant_nodes([rev])).difference([rev])
+
+            assert not ancestors.intersection(descendants)
+
+            remaining = set(revs[idx + 1:])
+            if remaining:
+                assert remaining.intersection(ancestors)
+
+
+class DepResolutionFailedTest(DownIterateTest):
+    def setUp(self):
+        self.map = RevisionMap(
+            lambda: [
+                Revision('base1', ()),
+                Revision('a1', 'base1'),
+                Revision('a2', 'base1'),
+                Revision('b1', 'a1'),
+                Revision('c1', 'b1'),
+            ]
+        )
+        # intentionally make a broken map
+        self.map._revision_map['fake'] = self.map._revision_map['a2']
+        self.map._revision_map['b1'].dependencies = 'fake'
+        self.map._revision_map['b1']._resolved_dependencies = ('fake', )
+
+    def test_failure_message(self):
+        iter_ = self.map.iterate_revisions("c1", "base1")
+        assert_raises_message(
+            RevisionError,
+            "Dependency resolution failed;",
+            list, iter_
+        )

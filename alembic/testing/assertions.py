@@ -2,9 +2,9 @@ from __future__ import absolute_import
 
 
 import re
-from alembic import util
+from .. import util
 from sqlalchemy.engine import default
-from alembic.compat import text_type, py3k
+from ..util.compat import text_type, py3k
 import contextlib
 from sqlalchemy.util import decorator
 from sqlalchemy import exc as sa_exc
@@ -24,6 +24,10 @@ if not util.sqla_094:
     def is_(a, b, msg=None):
         """Assert a is b, with repr messaging on failure."""
         assert a is b, msg or "%r is not %r" % (a, b)
+
+    def is_not_(a, b, msg=None):
+        """Assert a is not b, with repr messaging on failure."""
+        assert a is not b, msg or "%r is %r" % (a, b)
 
     def assert_raises(except_cls, callable_, *args, **kw):
         try:
@@ -45,7 +49,7 @@ if not util.sqla_094:
             print(text_type(e).encode('utf-8'))
 
 else:
-    from sqlalchemy.testing.assertions import eq_, ne_, is_, \
+    from sqlalchemy.testing.assertions import eq_, ne_, is_, is_not_, \
         assert_raises_message, assert_raises
 
 
@@ -89,6 +93,8 @@ def _get_dialect(name):
             _dialects[name] = d = dialect_mod.dialect()
             if name == 'postgresql':
                 d.implicit_returning = True
+            elif name == 'mssql':
+                d.legacy_schema_aliasing = False
             return d
 
 

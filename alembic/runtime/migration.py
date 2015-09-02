@@ -6,8 +6,8 @@ from sqlalchemy import MetaData, Table, Column, String, literal_column
 from sqlalchemy.engine.strategies import MockEngineStrategy
 from sqlalchemy.engine import url as sqla_url
 
-from .compat import callable, EncodedIO
-from . import ddl, util
+from ..util.compat import callable, EncodedIO
+from .. import ddl, util
 
 log = logging.getLogger(__name__)
 
@@ -118,6 +118,7 @@ class MigrationContext(object):
                   connection=None,
                   url=None,
                   dialect_name=None,
+                  dialect=None,
                   environment_context=None,
                   opts=None,
                   ):
@@ -152,7 +153,7 @@ class MigrationContext(object):
         elif dialect_name:
             url = sqla_url.make_url("%s://" % dialect_name)
             dialect = url.get_dialect()()
-        else:
+        elif not dialect:
             raise Exception("Connection, url, or dialect_name is required.")
 
         return MigrationContext(dialect, connection, opts, environment_context)
@@ -264,6 +265,8 @@ class MigrationContext(object):
 
         """
         heads = self.get_current_heads()
+        if not self.as_sql and not heads:
+            self._ensure_version_table()
         head_maintainer = HeadMaintainer(self, heads)
         for step in script_directory._stamp_revs(revision, heads):
             head_maintainer.update_to_step(step)
