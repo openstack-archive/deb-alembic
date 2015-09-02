@@ -1,3 +1,9 @@
+alembic (0.8.2-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 02 Sep 2015 18:24:25 +0200
+
 alembic (0.7.6-2) unstable; urgency=medium
 
   * Added missing python-pytest build-depends (Closes: #796413).
