@@ -1,3 +1,9 @@
+alembic (0.8.2-2) unstable; urgency=medium
+
+  * Added missing dependency on python-editor.
+
+ -- Thomas Goirand <zigo@debian.org>  Fri, 04 Sep 2015 12:43:20 +0000
+
 alembic (0.8.2-1) unstable; urgency=medium
 
   * New upstream release.

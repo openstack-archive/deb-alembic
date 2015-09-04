@@ -52,7 +52,8 @@ Description: lightweight database migration tool for SQLAlchemy
 
 Package: python-alembic
 Architecture: all
-Depends: python-mako,
+Depends: python-editor,
+         python-mako,
          python-sqlalchemy,
          ${misc:Depends},
          ${python:Depends},
@@ -76,7 +77,10 @@ Description: lightweight database migration tool for SQLAlchemy - Python 2.x
 
 Package: python3-alembic
 Architecture: all
-Depends: ${misc:Depends},
+Depends: python3-editor,
+         python3-mako,
+         python3-sqlalchemy,
+         ${misc:Depends},
          ${python3:Depends},
          ${sphinxdoc:Depends},
 Recommends: python3-pkg-resources,
