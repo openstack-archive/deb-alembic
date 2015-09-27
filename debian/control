@@ -24,7 +24,7 @@ Build-Depends-Indep: python-mako,
                      python3-sqlalchemy,
 Standards-Version: 3.9.6
 Vcs-Browser: http://anonscm.debian.org/cgit/openstack/alembic.git
-Vcs-Git: git://anonscm.debian.org/openstack/alemgic.git
+Vcs-Git: git://anonscm.debian.org/openstack/alembic.git
 Homepage: http://www.bitbucket.org/zzzeek/alembic
 
 Package: alembic
