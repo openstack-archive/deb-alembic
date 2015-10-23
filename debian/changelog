@@ -2,6 +2,7 @@ alembic (0.8.2-4) unstable; urgency=medium
 
   * Fixed typo in VCS field.
   * Removed Piotr from Uploaders after he asked for that.
+  * override_dh_python3 to fix Py3 shebang.
 
  -- Thomas Goirand <zigo@debian.org>  Fri, 23 Oct 2015 21:26:53 +0000
 
