@@ -1,8 +1,9 @@
-alembic (0.8.2-3) UNRELEASED; urgency=medium
+alembic (0.8.2-4) unstable; urgency=medium
 
   * Fixed typo in VCS field.
+  * Removed Piotr from Uploaders after he asked for that.
 
- -- Thomas Goirand <zigo@debian.org>  Sun, 27 Sep 2015 09:31:28 +0200
+ -- Thomas Goirand <zigo@debian.org>  Fri, 23 Oct 2015 21:26:53 +0000
 
 alembic (0.8.2-2) unstable; urgency=medium
 
