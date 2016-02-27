@@ -1,0 +1,3 @@
+Test-Command: python -c "import alembic; print alembic.__version__"
+
+Test-Command: python3 -c "import alembic; print(alembic.__version__)"
