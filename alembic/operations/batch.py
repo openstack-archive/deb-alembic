@@ -4,7 +4,8 @@ from sqlalchemy import types as sqltypes
 from sqlalchemy import schema as sql_schema
 from sqlalchemy.util import OrderedDict
 from .. import util
-from ..util.sqla_compat import _columns_for_constraint, _is_type_bound
+from ..util.sqla_compat import _columns_for_constraint, \
+    _is_type_bound, _fk_is_self_referential
 
 
 class BatchOperationsImpl(object):
@@ -128,6 +129,7 @@ class ApplyBatchImpl(object):
         self.named_constraints = {}
         self.unnamed_constraints = []
         self.indexes = {}
+        self.new_indexes = {}
         for const in self.table.constraints:
             if _is_type_bound(const):
                 continue
@@ -162,16 +164,40 @@ class ApplyBatchImpl(object):
 
             if not const_columns.issubset(self.column_transfers):
                 continue
-            const_copy = const.copy(schema=schema, target_table=new_table)
+
+            if isinstance(const, ForeignKeyConstraint):
+                if _fk_is_self_referential(const):
+                    # for self-referential constraint, refer to the
+                    # *original* table name, and not _alembic_batch_temp.
+                    # This is consistent with how we're handling
+                    # FK constraints from other tables; we assume SQLite
+                    # no foreign keys just keeps the names unchanged, so
+                    # when we rename back, they match again.
+                    const_copy = const.copy(
+                        schema=schema, target_table=self.table)
+                else:
+                    # "target_table" for ForeignKeyConstraint.copy() is
+                    # only used if the FK is detected as being
+                    # self-referential, which we are handling above.
+                    const_copy = const.copy(schema=schema)
+            else:
+                const_copy = const.copy(schema=schema, target_table=new_table)
             if isinstance(const, ForeignKeyConstraint):
                 self._setup_referent(m, const)
             new_table.append_constraint(const_copy)
 
-        for index in self.indexes.values():
-            Index(index.name,
-                  unique=index.unique,
-                  *[new_table.c[col] for col in index.columns.keys()],
-                  **index.kwargs)
+    def _gather_indexes_from_both_tables(self):
+        idx = []
+        idx.extend(self.indexes.values())
+        for index in self.new_indexes.values():
+            idx.append(
+                Index(
+                    index.name,
+                    unique=index.unique,
+                    *[self.new_table.c[col] for col in index.columns.keys()],
+                    **index.kwargs)
+            )
+        return idx
 
     def _setup_referent(self, metadata, constraint):
         spec = constraint.elements[0]._get_colspec()
@@ -181,6 +207,7 @@ class ApplyBatchImpl(object):
             referent_schema = parts[0]
         else:
             referent_schema = None
+
         if tname != '_alembic_batch_temp':
             key = sql_schema._get_table_key(tname, referent_schema)
             if key in metadata.tables:
@@ -227,6 +254,12 @@ class ApplyBatchImpl(object):
                 self.table.name,
                 schema=self.table.schema
             )
+            self.new_table.name = self.table.name
+            try:
+                for idx in self._gather_indexes_from_both_tables():
+                    op_impl.create_index(idx)
+            finally:
+                self.new_table.name = "_alembic_batch_temp"
 
     def alter_column(self, table_name, column_name,
                      nullable=None,
@@ -251,7 +284,7 @@ class ApplyBatchImpl(object):
         if nullable is not None:
             existing.nullable = nullable
         if server_default is not False:
-            existing.server_default = server_default
+            sql_schema.DefaultClause(server_default)._set_parent(existing)
         if autoincrement is not None:
             existing.autoincrement = bool(autoincrement)
 
@@ -283,7 +316,7 @@ class ApplyBatchImpl(object):
             raise ValueError("No such constraint: '%s'" % const.name)
 
     def create_index(self, idx):
-        self.indexes[idx.name] = idx
+        self.new_indexes[idx.name] = idx
 
     def drop_index(self, idx):
         try:

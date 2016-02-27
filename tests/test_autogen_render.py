@@ -1,6 +1,6 @@
 import re
 import sys
-from alembic.testing import TestBase, exclusions
+from alembic.testing import TestBase, exclusions, assert_raises
 
 from alembic.operations import ops
 from sqlalchemy import MetaData, Column, Table, String, \
@@ -13,7 +13,7 @@ from sqlalchemy.types import TIMESTAMP
 from sqlalchemy.types import UserDefinedType
 from sqlalchemy.dialects import mysql, postgresql
 from sqlalchemy.engine.default import DefaultDialect
-from sqlalchemy.sql import and_, column, literal_column, false
+from sqlalchemy.sql import and_, column, literal_column, false, table
 from alembic.migration import MigrationContext
 from alembic.autogenerate import api
 
@@ -154,7 +154,7 @@ class AutogenRenderTest(TestBase):
                 autogenerate.render_op_text(autogen_context, op_obj),
                 """op.create_index('foo_idx', 't', \
 ['x', 'y'], unique=False, """
-                """postgresql_where=sa.text(!U"t.y = 'something'"))"""
+                """postgresql_where=sa.text(!U"y = 'something'"))"""
             )
         else:
             eq_ignore_whitespace(
@@ -178,7 +178,7 @@ unique=False, """
         eq_ignore_whitespace(
             autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_lower_code_idx', 'test', "
-            "[sa.text(!U'lower(test.code)')], unique=False)"
+            "[sa.text(!U'lower(code)')], unique=False)"
         )
 
     @config.requirements.fail_before_sqla_080
@@ -210,7 +210,7 @@ unique=False, """
         eq_ignore_whitespace(
             autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_desc_code_idx', 'test', "
-            "[sa.text(!U'test.code DESC')], unique=False)"
+            "[sa.text(!U'code DESC')], unique=False)"
         )
 
     def test_drop_index(self):
@@ -992,14 +992,23 @@ unique=False, """
 
     def test_render_custom(self):
 
+        class MySpecialType(Integer):
+            pass
+
         def render(type_, obj, context):
             if type_ == "foreign_key":
                 return None
             if type_ == "column":
                 if obj.name == "y":
                     return None
+                elif obj.name == "q":
+                    return False
                 else:
                     return "col(%s)" % obj.name
+            if type_ == "type" and isinstance(obj, MySpecialType):
+                context.imports.add("from mypackage import MySpecialType")
+                return "MySpecialType()"
+
             return "render:%s" % type_
 
         self.autogen_context.opts.update(
@@ -1010,6 +1019,7 @@ unique=False, """
         t = Table('t', MetaData(),
                   Column('x', Integer),
                   Column('y', Integer),
+                  Column('q', MySpecialType()),
                   PrimaryKeyConstraint('x'),
                   ForeignKeyConstraint(['x'], ['y'])
                   )
@@ -1019,7 +1029,12 @@ unique=False, """
             result,
             "sa.create_table('t',"
             "col(x),"
+            "sa.Column('q', MySpecialType(), nullable=True),"
             "render:primary_key)"
+        )
+        eq_(
+            self.autogen_context.imports,
+            set(['from mypackage import MySpecialType'])
         )
 
     def test_render_modify_type(self):
@@ -1350,7 +1365,7 @@ unique=False, """
             autogenerate.render._repr_type(type_, self.autogen_context),
             "mysql.VARCHAR(charset='utf8', national=True, length=20)"
         )
-        eq_(self.autogen_context._imports,
+        eq_(self.autogen_context.imports,
             set(['from sqlalchemy.dialects import mysql'])
             )
 
@@ -1441,6 +1456,21 @@ unique=False, """
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.Integer(), nullable=True, "
             "existing_server_default=sa.text(!U'5'))"
+        )
+
+    def test_render_executesql_plaintext(self):
+        op_obj = ops.ExecuteSQLOp("drop table foo")
+        eq_(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.execute('drop table foo')"
+        )
+
+    def test_render_executesql_sqlexpr_notimplemented(self):
+        sql = table('x', column('q')).insert()
+        op_obj = ops.ExecuteSQLOp(sql)
+        assert_raises(
+            NotImplementedError,
+            autogenerate.render_op_text, self.autogen_context, op_obj
         )
 
 

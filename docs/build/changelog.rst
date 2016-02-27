@@ -4,6 +4,117 @@ Changelog
 ==========
 
 .. changelog::
+    :version: 0.8.4
+    :released: December 15, 2015
+
+    .. change::
+      :tags: feature, versioning
+      :pullreq: bitbucket:51
+
+      A major improvement to the hash id generation function, which for some
+      reason used an awkward arithmetic formula against uuid4() that produced
+      values that tended to start with the digits 1-4.  Replaced with a
+      simple substring approach which provides an even distribution.  Pull
+      request courtesy Antti Haapala.
+
+    .. change::
+      :tags: feature, autogenerate
+      :pullreq: github:20
+
+      Added an autogenerate renderer for the :class:`.ExecuteSQLOp` operation
+      object; only renders if given a plain SQL string, otherwise raises
+      NotImplementedError.  Can be of help with custom autogenerate
+      sequences that includes straight SQL execution.  Pull request courtesy
+      Jacob Magnusson.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 345
+
+      Batch mode generates a FOREIGN KEY constraint that is self-referential
+      using the ultimate table name, rather than ``_alembic_batch_temp``.
+      When the table is renamed from ``_alembic_batch_temp`` back to the
+      original name, the FK now points to the right name.  This
+      will **not** work if referential integrity is being enforced (eg. SQLite
+      "PRAGMA FOREIGN_KEYS=ON") since the original table is dropped and
+      the new table then renamed to that name, however this is now consistent
+      with how foreign key constraints on **other** tables already operate
+      with batch mode; these don't support batch mode if referential integrity
+      is enabled in any case.
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 341
+
+      Added a type-level comparator that distinguishes :class:`.Integer`,
+      :class:`.BigInteger`, and :class:`.SmallInteger` types and
+      dialect-specific types; these all have "Integer" affinity so previously
+      all compared as the same.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 338
+
+      Fixed bug where the ``server_default`` parameter of ``alter_column()``
+      would not function correctly in batch mode.
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 337
+
+      Adjusted the rendering for index expressions such that a :class:`.Column`
+      object present in the source :class:`.Index` will not be rendered
+      as table-qualified; e.g. the column name will be rendered alone.
+      Table-qualified names here were failing on systems such as Postgresql.
+
+.. changelog::
+    :version: 0.8.3
+    :released: October 16, 2015
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 332
+
+      Fixed an 0.8 regression whereby the "imports" dictionary member of
+      the autogen context was removed; this collection is documented in the
+      "render custom type" documentation as a place to add new imports.
+      The member is now known as
+      :attr:`.AutogenContext.imports` and the documentation is repaired.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 333
+
+      Fixed bug in batch mode where a table that had pre-existing indexes
+      would create the same index on the new table with the same name,
+      which on SQLite produces a naming conflict as index names are in a
+      global namespace on that backend.   Batch mode now defers the production
+      of both existing and new indexes until after the entire table transfer
+      operation is complete, which also means those indexes no longer take
+      effect during the INSERT from SELECT section as well; the indexes
+      are applied in a single step afterwards.
+
+    .. change::
+      :tags: bug, tests
+      :pullreq: bitbucket:47
+
+      Added "pytest-xdist" as a tox dependency, so that the -n flag
+      in the test command works if this is not already installed.
+      Pull request courtesy Julien Danjou.
+
+    .. change::
+      :tags: bug, autogenerate, postgresql
+      :tickets: 324
+
+      Fixed issue in PG server default comparison where model-side defaults
+      configured with Python unicode literals would leak the "u" character
+      from a ``repr()`` into the SQL used for comparison, creating an invalid
+      SQL expression, as the server-side comparison feature in PG currently
+      repurposes the autogenerate Python rendering feature to get a quoted
+      version of a plain string default.
+
+
+.. changelog::
     :version: 0.8.2
     :released: August 25, 2015
 

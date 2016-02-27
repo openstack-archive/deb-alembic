@@ -180,8 +180,12 @@ class BatchApplyTest(TestBase):
         create_stmt = re.sub(r'[\n\t]', '', create_stmt)
 
         idx_stmt = ""
-        for idx in impl.new_table.indexes:
+        for idx in impl.indexes.values():
             idx_stmt += str(CreateIndex(idx).compile(dialect=context.dialect))
+        for idx in impl.new_indexes.values():
+            impl.new_table.name = impl.table.name
+            idx_stmt += str(CreateIndex(idx).compile(dialect=context.dialect))
+            impl.new_table.name = '_alembic_batch_temp'
         idx_stmt = re.sub(r'[\n\t]', '', idx_stmt)
 
         if ddl_contains:
@@ -192,8 +196,6 @@ class BatchApplyTest(TestBase):
         expected = [
             create_stmt,
         ]
-        if impl.new_table.indexes:
-            expected.append(idx_stmt)
 
         if schema:
             args = {"schema": "%s." % schema}
@@ -225,6 +227,8 @@ class BatchApplyTest(TestBase):
             'ALTER TABLE %(schema)s_alembic_batch_temp '
             'RENAME TO %(schema)stname' % args
         ])
+        if idx_stmt:
+            expected.append(idx_stmt)
         context.assert_(*expected)
         return impl.new_table
 
@@ -334,6 +338,15 @@ class BatchApplyTest(TestBase):
         impl.add_column('tname', col)
         new_table = self._assert_impl(impl, colnames=['id', 'x', 'y', 'g'])
         eq_(new_table.c.g.name, 'g')
+
+    def test_add_server_default(self):
+        impl = self._simple_fixture()
+        impl.alter_column('tname', 'y', server_default="10")
+        new_table = self._assert_impl(
+            impl, ddl_contains="DEFAULT '10'")
+        eq_(
+            new_table.c.y.server_default.arg, "10"
+        )
 
     def test_rename_col_pk(self):
         impl = self._simple_fixture()
@@ -731,11 +744,11 @@ class CopyFromTest(TestBase):
             'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
             'data VARCHAR(50), '
             'x INTEGER, PRIMARY KEY (id))',
-            'CREATE UNIQUE INDEX ix_data ON _alembic_batch_temp (data)',
             'INSERT INTO _alembic_batch_temp (id, data, x) '
             'SELECT foo.id, foo.data, foo.x FROM foo',
             'DROP TABLE foo',
-            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo',
+            'CREATE UNIQUE INDEX ix_data ON foo (data)',
         )
 
         context.clear_assertions()
@@ -787,11 +800,11 @@ class CopyFromTest(TestBase):
         context.assert_(
             'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
             'data INTEGER, x INTEGER, PRIMARY KEY (id))',
-            'CREATE UNIQUE INDEX ix_data ON _alembic_batch_temp (data)',
             'INSERT INTO _alembic_batch_temp (id, data, x) SELECT foo.id, '
             'CAST(foo.data AS INTEGER) AS anon_1, foo.x FROM foo',
             'DROP TABLE foo',
-            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo',
+            'CREATE UNIQUE INDEX ix_data ON foo (data)',
         )
 
         context.clear_assertions()
@@ -841,6 +854,14 @@ class BatchRoundTripTest(TestBase):
         context = MigrationContext.configure(self.conn)
         self.op = Operations(context)
 
+    @contextmanager
+    def _sqlite_referential_integrity(self):
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            yield
+        finally:
+            self.conn.execute("PRAGMA foreign_keys=OFF")
+
     def _no_pk_fixture(self):
         nopk = Table(
             'nopk', self.metadata,
@@ -860,6 +881,17 @@ class BatchRoundTripTest(TestBase):
         )
         return nopk
 
+    def _table_w_index_fixture(self):
+        t = Table(
+            't_w_ix', self.metadata,
+            Column('id', Integer, primary_key=True),
+            Column('thing', Integer),
+            Column('data', String(20)),
+        )
+        Index('ix_thing', t.c.thing)
+        t.create(self.conn)
+        return t
+
     def tearDown(self):
         self.metadata.drop_all(self.conn)
         self.conn.close()
@@ -871,6 +903,25 @@ class BatchRoundTripTest(TestBase):
             data
         )
 
+    def test_ix_existing(self):
+        self._table_w_index_fixture()
+
+        with self.op.batch_alter_table("t_w_ix") as batch_op:
+            batch_op.alter_column('data', type_=String(30))
+            batch_op.create_index("ix_data", ["data"])
+
+        insp = Inspector.from_engine(config.db)
+        eq_(
+            set(
+                (ix['name'], tuple(ix['column_names'])) for ix in
+                insp.get_indexes('t_w_ix')
+            ),
+            set([
+                ('ix_data', ('data',)),
+                ('ix_thing', ('thing', ))
+            ])
+        )
+
     def test_fk_points_to_me_auto(self):
         self._test_fk_points_to_me("auto")
 
@@ -880,6 +931,14 @@ class BatchRoundTripTest(TestBase):
     @config.requirements.no_referential_integrity
     def test_fk_points_to_me_recreate(self):
         self._test_fk_points_to_me("always")
+
+    @exclusions.only_on("sqlite")
+    @exclusions.fails(
+        "intentionally asserting that this "
+        "doesn't work w/ pragma foreign keys")
+    def test_fk_points_to_me_sqlite_refinteg(self):
+        with self._sqlite_referential_integrity():
+            self._test_fk_points_to_me("auto")
 
     def _test_fk_points_to_me(self, recreate):
         bar = Table(
@@ -894,6 +953,55 @@ class BatchRoundTripTest(TestBase):
         with self.op.batch_alter_table("foo", recreate=recreate) as batch_op:
             batch_op.alter_column(
                 'data', new_column_name='newdata', existing_type=String(50))
+
+        insp = Inspector.from_engine(self.conn)
+        eq_(
+            [(key['referred_table'],
+             key['referred_columns'], key['constrained_columns'])
+             for key in insp.get_foreign_keys('bar')],
+            [('foo', ['id'], ['foo_id'])]
+        )
+
+    def test_selfref_fk_auto(self):
+        self._test_selfref_fk("auto")
+
+    @config.requirements.no_referential_integrity
+    def test_selfref_fk_recreate(self):
+        self._test_selfref_fk("always")
+
+    @exclusions.only_on("sqlite")
+    @exclusions.fails(
+        "intentionally asserting that this "
+        "doesn't work w/ pragma foreign keys")
+    def test_selfref_fk_sqlite_refinteg(self):
+        with self._sqlite_referential_integrity():
+            self._test_selfref_fk("auto")
+
+    def _test_selfref_fk(self, recreate):
+        bar = Table(
+            'bar', self.metadata,
+            Column('id', Integer, primary_key=True),
+            Column('bar_id', Integer, ForeignKey('bar.id')),
+            Column('data', String(50)),
+            mysql_engine='InnoDB'
+        )
+        bar.create(self.conn)
+        self.conn.execute(bar.insert(), {'id': 1, 'data': 'x', 'bar_id': None})
+        self.conn.execute(bar.insert(), {'id': 2, 'data': 'y', 'bar_id': 1})
+
+        with self.op.batch_alter_table("bar", recreate=recreate) as batch_op:
+            batch_op.alter_column(
+                'data', new_column_name='newdata', existing_type=String(50))
+
+        insp = Inspector.from_engine(self.conn)
+
+        insp = Inspector.from_engine(self.conn)
+        eq_(
+            [(key['referred_table'],
+             key['referred_columns'], key['constrained_columns'])
+             for key in insp.get_foreign_keys('bar')],
+            [('bar', ['id'], ['bar_id'])]
+        )
 
     def test_change_type(self):
         with self.op.batch_alter_table("foo") as batch_op:

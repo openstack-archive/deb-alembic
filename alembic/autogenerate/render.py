@@ -31,7 +31,7 @@ def _indent(text):
 
 def _render_python_into_templatevars(
         autogen_context, migration_script, template_args):
-    imports = autogen_context._imports
+    imports = autogen_context.imports
 
     for upgrade_ops, downgrade_ops in zip(
             migration_script.upgrade_ops_list,
@@ -418,7 +418,8 @@ def _ident(name):
 def _render_potential_expr(value, autogen_context, wrap_in_text=True):
     if isinstance(value, sql.ClauseElement):
         if compat.sqla_08:
-            compile_kw = dict(compile_kwargs={'literal_binds': True})
+            compile_kw = dict(compile_kwargs={
+                'literal_binds': True, "include_table": False})
         else:
             compile_kw = {}
 
@@ -567,7 +568,7 @@ def _repr_type(type_, autogen_context):
         return rendered
 
     mod = type(type_).__module__
-    imports = autogen_context._imports
+    imports = autogen_context.imports
     if mod.startswith("sqlalchemy.dialects"):
         dname = re.match(r"sqlalchemy\.dialects\.(\w+)", mod).group(1)
         if imports is not None:
@@ -719,6 +720,16 @@ def _render_check_constraint(constraint, autogen_context):
         "sqltext": _render_potential_expr(
             constraint.sqltext, autogen_context, wrap_in_text=False)
     }
+
+
+@renderers.dispatch_for(ops.ExecuteSQLOp)
+def _execute_sql(autogen_context, op):
+    if not isinstance(op.sqltext, string_types):
+        raise NotImplementedError(
+            "Autogenerate rendering of SQL Expression language constructs "
+            "not supported here; please use a plain SQL string"
+        )
+    return 'op.execute(%r)' % op.sqltext
 
 
 renderers = default_renderers.branch()
