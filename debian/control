@@ -21,7 +21,7 @@ Build-Depends-Indep: python-mako,
                      python3-mock,
                      python3-pytest,
                      python3-sqlalchemy,
-Standards-Version: 3.9.7
+Standards-Version: 3.9.8
 Vcs-Browser: https://anonscm.debian.org/cgit/openstack/alembic.git
 Vcs-Git: https://anonscm.debian.org/git/openstack/alembic.git
 Homepage: https://bitbucket.org/zzzeek/alembic

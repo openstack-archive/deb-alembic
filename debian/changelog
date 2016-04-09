@@ -6,6 +6,7 @@ alembic (0.8.4-1) UNRELEASED; urgency=medium
   * Fixed Vcs URLs (https).
   * Added myself to d/copyright.
   * Fixed homepage (https).
+  * Standards-Version is 3.9.8 now (no change)
 
  -- Ondřej Nový <novy@ondrej.org>  Sat, 27 Feb 2016 19:11:36 +0100
 
