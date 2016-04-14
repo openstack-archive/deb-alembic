@@ -10,6 +10,7 @@ from .base import ColumnNullable, ColumnName, ColumnDefault, \
     format_server_default
 from .base import alter_table
 from ..autogenerate import compare
+from ..util.sqla_compat import _is_type_bound
 
 
 class MySQLImpl(DefaultImpl):
@@ -73,6 +74,12 @@ class MySQLImpl(DefaultImpl):
                     schema=schema,
                 )
             )
+
+    def drop_constraint(self, const):
+        if isinstance(const, schema.CheckConstraint) and _is_type_bound(const):
+            return
+
+        super(MySQLImpl, self).drop_constraint(const)
 
     def compare_server_default(self, inspector_column,
                                metadata_column,
