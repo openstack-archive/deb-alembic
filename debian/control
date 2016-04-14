@@ -53,12 +53,12 @@ Package: python-alembic
 Architecture: all
 Depends: python-editor,
          python-mako,
+         python-pkg-resources,
          python-sqlalchemy,
          ${misc:Depends},
          ${python:Depends},
 Breaks: alembic (<< 0.6.3+ds-2),
 Replaces: alembic (<< 0.6.3+ds-2),
-Recommends: python-pkg-resources,
 Description: lightweight database migration tool for SQLAlchemy - Python 2.x
  Alembic is a new database migration tool, written by the author
  of SQLAlchemy. A migration tool offers the following functionality:
@@ -78,11 +78,11 @@ Package: python3-alembic
 Architecture: all
 Depends: python3-editor,
          python3-mako,
+         python3-pkg-resources,
          python3-sqlalchemy,
          ${misc:Depends},
          ${python3:Depends},
          ${sphinxdoc:Depends},
-Recommends: python3-pkg-resources,
 Description: lightweight database migration tool for SQLAlchemy - Python 3.x
  Alembic is a new database migration tool, written by the author
  of SQLAlchemy. A migration tool offers the following functionality:
