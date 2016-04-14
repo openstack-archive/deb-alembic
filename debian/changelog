@@ -1,5 +1,6 @@
-alembic (0.8.5-1) UNRELEASED; urgency=medium
+alembic (0.8.5-1) unstable; urgency=medium
 
+  * Team upload.
   * New upstream release.
   * Added Debian tests.
   * Fixed Vcs URLs (https).
@@ -10,7 +11,7 @@ alembic (0.8.5-1) UNRELEASED; urgency=medium
   * Standards-Version is 3.9.8 now (no change)
   * Added depends to python(3)-pkg-resources (Closes: #821010).
 
- -- Ondřej Nový <novy@ondrej.org>  Sat, 27 Feb 2016 19:11:36 +0100
+ -- Ondřej Nový <novy@ondrej.org>  Thu, 14 Apr 2016 20:48:00 +0200
 
 alembic (0.8.2-3) unstable; urgency=medium
 
