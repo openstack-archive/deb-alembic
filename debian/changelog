@@ -1,10 +1,11 @@
-alembic (0.8.4-1) UNRELEASED; urgency=medium
+alembic (0.8.5-1) UNRELEASED; urgency=medium
 
   * New upstream release.
   * Added Debian tests.
-  * Standards-Version is 3.9.7 now (no change).
   * Fixed Vcs URLs (https).
-  * Added myself to d/copyright.
+  * d/copyright
+    - Fixed for new release
+    - Added myself for Debian part
   * Fixed homepage (https).
   * Standards-Version is 3.9.8 now (no change)
   * Added depends to python(3)-pkg-resources (Closes: #821010).
