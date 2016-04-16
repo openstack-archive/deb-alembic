@@ -4,6 +4,45 @@ Changelog
 ==========
 
 .. changelog::
+    :version: 0.8.6
+    :released: April 14, 2016
+
+    .. change::
+      :tags: bug, commands
+      :tickets: 367
+
+      Errors which occur within the Mako render step are now intercepted
+      and raised as CommandErrors like other failure cases; the Mako
+      exception itself is written using template-line formatting to
+      a temporary file which is named in the exception message.
+
+    .. change::
+      :tags: bug, postgresql
+      :tickets: 365
+
+      Added a fix to Postgresql server default comparison which first checks
+      if the text of the default is identical to the original, before attempting
+      to actually run the default.  This accomodates for default-generation
+      functions that generate a new value each time such as a uuid function.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 361
+      :pullreq: bitbucket:55
+
+      Fixed bug introduced by the fix for :ticket:`338` in version 0.8.4
+      where a server default could no longer be dropped in batch mode.
+      Pull request courtesy Martin Domke.
+
+    .. change::
+      :tags: bug, batch, mssql
+      :pullreq: bitbucket:53
+
+      Fixed bug where SQL Server arguments for drop_column() would not
+      be propagated when running under a batch block.  Pull request
+      courtesy Michal Petrucha.
+
+.. changelog::
     :version: 0.8.5
     :released: March 9, 2016
 
