@@ -1,6 +1,7 @@
 alembic (0.8.6-1) UNRELEASED; urgency=medium
 
   * New upstream release.
+  * Change directory to $ADTTMP before running Debian tests
 
  -- Ondřej Nový <novy@ondrej.org>  Sat, 16 Apr 2016 20:13:25 +0200
 
