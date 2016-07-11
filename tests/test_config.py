@@ -1,9 +1,8 @@
 #!coding: utf-8
 
-import os
-import tempfile
 
-from alembic import config, util, compat
+from alembic import config, util
+from alembic.util import compat
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
@@ -50,6 +49,29 @@ class ConfigTest(TestBase):
         cfg.set_section_option("foo", "echo", "True")
         eq_(cfg.get_section_option("foo", "echo"), "True")
 
+    def test_config_set_main_option_percent(self):
+        cfg = config.Config()
+        cfg.set_main_option("foob", "a %% percent")
+
+        eq_(cfg.get_main_option("foob"), "a % percent")
+
+    def test_config_set_section_option_percent(self):
+        cfg = config.Config()
+        cfg.set_section_option("some_section", "foob", "a %% percent")
+
+        eq_(cfg.get_section_option("some_section", "foob"), "a % percent")
+
+    def test_config_set_section_option_interpolation(self):
+        cfg = config.Config()
+        cfg.set_section_option("some_section", "foob", "foob_value")
+
+        cfg.set_section_option(
+            "some_section", "bar", "bar with %(foob)s")
+
+        eq_(
+            cfg.get_section_option("some_section", "bar"),
+            "bar with foob_value")
+
     def test_standalone_op(self):
         eng, buf = capture_db()
 
@@ -65,6 +87,23 @@ class ConfigTest(TestBase):
             util.CommandError,
             "No 'script_location' key found in configuration.",
             ScriptDirectory.from_config, cfg
+        )
+
+    def test_attributes_attr(self):
+        m1 = Mock()
+        cfg = config.Config()
+        cfg.attributes['connection'] = m1
+        eq_(
+            cfg.attributes['connection'], m1
+        )
+
+    def test_attributes_construtor(self):
+        m1 = Mock()
+        m2 = Mock()
+        cfg = config.Config(attributes={'m1': m1})
+        cfg.attributes['connection'] = m2
+        eq_(
+            cfg.attributes, {'m1': m1, 'connection': m2}
         )
 
 

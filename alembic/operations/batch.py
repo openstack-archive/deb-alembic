@@ -3,8 +3,11 @@ from sqlalchemy import Table, MetaData, Index, select, Column, \
 from sqlalchemy import types as sqltypes
 from sqlalchemy import schema as sql_schema
 from sqlalchemy.util import OrderedDict
-from . import util
-from .ddl.base import _columns_for_constraint, _is_type_bound
+from .. import util
+if util.sqla_08:
+    from sqlalchemy.events import SchemaEventTarget
+from ..util.sqla_compat import _columns_for_constraint, \
+    _is_type_bound, _fk_is_self_referential
 
 
 class BatchOperationsImpl(object):
@@ -23,7 +26,7 @@ class BatchOperationsImpl(object):
         self.recreate = recreate
         self.copy_from = copy_from
         self.table_args = table_args
-        self.table_kwargs = table_kwargs
+        self.table_kwargs = dict(table_kwargs)
         self.reflect_args = reflect_args
         self.reflect_kwargs = reflect_kwargs
         self.naming_convention = naming_convention
@@ -58,12 +61,15 @@ class BatchOperationsImpl(object):
             else:
                 m1 = MetaData()
 
-            existing_table = Table(
-                self.table_name, m1,
-                schema=self.schema,
-                autoload=True,
-                autoload_with=self.operations.get_bind(),
-                *self.reflect_args, **self.reflect_kwargs)
+            if self.copy_from is not None:
+                existing_table = self.copy_from
+            else:
+                existing_table = Table(
+                    self.table_name, m1,
+                    schema=self.schema,
+                    autoload=True,
+                    autoload_with=self.operations.get_bind(),
+                    *self.reflect_args, **self.reflect_kwargs)
 
             batch_impl = ApplyBatchImpl(
                 existing_table, self.table_args, self.table_kwargs)
@@ -121,14 +127,19 @@ class ApplyBatchImpl(object):
         for c in self.table.c:
             c_copy = c.copy(schema=schema)
             c_copy.unique = c_copy.index = False
+            # ensure that the type object was copied,
+            # as we may need to modify it in-place
+            if isinstance(c.type, SchemaEventTarget):
+                assert c_copy.type is not c.type
             self.columns[c.name] = c_copy
         self.named_constraints = {}
         self.unnamed_constraints = []
         self.indexes = {}
+        self.new_indexes = {}
         for const in self.table.constraints:
             if _is_type_bound(const):
                 continue
-            if const.name:
+            elif const.name:
                 self.named_constraints[const.name] = const
             else:
                 self.unnamed_constraints.append(const)
@@ -136,11 +147,15 @@ class ApplyBatchImpl(object):
         for idx in self.table.indexes:
             self.indexes[idx.name] = idx
 
+        for k in self.table.kwargs:
+            self.table_kwargs.setdefault(k, self.table.kwargs[k])
+
     def _transfer_elements_to_new_table(self):
         assert self.new_table is None, "Can only create new table once"
 
         m = MetaData()
         schema = self.table.schema
+
         self.new_table = new_table = Table(
             '_alembic_batch_temp', m,
             *(list(self.columns.values()) + list(self.table_args)),
@@ -155,16 +170,40 @@ class ApplyBatchImpl(object):
 
             if not const_columns.issubset(self.column_transfers):
                 continue
-            const_copy = const.copy(schema=schema, target_table=new_table)
+
+            if isinstance(const, ForeignKeyConstraint):
+                if _fk_is_self_referential(const):
+                    # for self-referential constraint, refer to the
+                    # *original* table name, and not _alembic_batch_temp.
+                    # This is consistent with how we're handling
+                    # FK constraints from other tables; we assume SQLite
+                    # no foreign keys just keeps the names unchanged, so
+                    # when we rename back, they match again.
+                    const_copy = const.copy(
+                        schema=schema, target_table=self.table)
+                else:
+                    # "target_table" for ForeignKeyConstraint.copy() is
+                    # only used if the FK is detected as being
+                    # self-referential, which we are handling above.
+                    const_copy = const.copy(schema=schema)
+            else:
+                const_copy = const.copy(schema=schema, target_table=new_table)
             if isinstance(const, ForeignKeyConstraint):
                 self._setup_referent(m, const)
             new_table.append_constraint(const_copy)
 
-        for index in self.indexes.values():
-            Index(index.name,
-                  unique=index.unique,
-                  *[new_table.c[col] for col in index.columns.keys()],
-                  **index.kwargs)
+    def _gather_indexes_from_both_tables(self):
+        idx = []
+        idx.extend(self.indexes.values())
+        for index in self.new_indexes.values():
+            idx.append(
+                Index(
+                    index.name,
+                    unique=index.unique,
+                    *[self.new_table.c[col] for col in index.columns.keys()],
+                    **index.kwargs)
+            )
+        return idx
 
     def _setup_referent(self, metadata, constraint):
         spec = constraint.elements[0]._get_colspec()
@@ -174,6 +213,7 @@ class ApplyBatchImpl(object):
             referent_schema = parts[0]
         else:
             referent_schema = None
+
         if tname != '_alembic_batch_temp':
             key = sql_schema._get_table_key(tname, referent_schema)
             if key in metadata.tables:
@@ -220,6 +260,12 @@ class ApplyBatchImpl(object):
                 self.table.name,
                 schema=self.table.schema
             )
+            self.new_table.name = self.table.name
+            try:
+                for idx in self._gather_indexes_from_both_tables():
+                    op_impl.create_index(idx)
+            finally:
+                self.new_table.name = "_alembic_batch_temp"
 
     def alter_column(self, table_name, column_name,
                      nullable=None,
@@ -239,12 +285,30 @@ class ApplyBatchImpl(object):
 
         if type_ is not None:
             type_ = sqltypes.to_instance(type_)
+            # old type is being discarded so turn off eventing
+            # rules. Alternatively we can
+            # erase the events set up by this type, but this is simpler.
+            # we also ignore the drop_constraint that will come here from
+            # Operations.implementation_for(alter_column)
+            if isinstance(existing.type, SchemaEventTarget):
+                existing.type._create_events = \
+                    existing.type.create_constraint = False
+
             existing.type = type_
+
+            # we *dont* however set events for the new type, because
+            # alter_column is invoked from
+            # Operations.implementation_for(alter_column) which already
+            # will emit an add_constraint()
+
             existing_transfer["expr"] = cast(existing_transfer["expr"], type_)
         if nullable is not None:
             existing.nullable = nullable
         if server_default is not False:
-            existing.server_default = server_default
+            if server_default is None:
+                existing.server_default = None
+            else:
+                sql_schema.DefaultClause(server_default)._set_parent(existing)
         if autoincrement is not None:
             existing.autoincrement = bool(autoincrement)
 
@@ -261,6 +325,10 @@ class ApplyBatchImpl(object):
     def add_constraint(self, const):
         if not const.name:
             raise ValueError("Constraint must have a name")
+        if isinstance(const, sql_schema.PrimaryKeyConstraint):
+            if self.table.primary_key in self.unnamed_constraints:
+                self.unnamed_constraints.remove(self.table.primary_key)
+
         self.named_constraints[const.name] = const
 
     def drop_constraint(self, const):
@@ -269,10 +337,16 @@ class ApplyBatchImpl(object):
         try:
             del self.named_constraints[const.name]
         except KeyError:
+            if _is_type_bound(const):
+                # type-bound constraints are only included in the new
+                # table via their type object in any case, so ignore the
+                # drop_constraint() that comes here via the
+                # Operations.implementation_for(alter_column)
+                return
             raise ValueError("No such constraint: '%s'" % const.name)
 
-    def add_index(self, idx):
-        self.indexes[idx.name] = idx
+    def create_index(self, idx):
+        self.new_indexes[idx.name] = idx
 
     def drop_index(self, idx):
         try:

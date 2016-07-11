@@ -2,19 +2,22 @@ from contextlib import contextmanager
 import re
 
 from alembic.testing import exclusions
+from alembic.testing import assert_raises_message
 from alembic.testing import TestBase, eq_, config
 from alembic.testing.fixtures import op_fixture
 from alembic.testing import mock
 from alembic.operations import Operations
-from alembic.batch import ApplyBatchImpl
-from alembic.migration import MigrationContext
+from alembic.operations.batch import ApplyBatchImpl
+from alembic.runtime.migration import MigrationContext
+
 
 from sqlalchemy import Integer, Table, Column, String, MetaData, ForeignKey, \
     UniqueConstraint, ForeignKeyConstraint, Index, Boolean, CheckConstraint, \
     Enum
 from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.sql import column
+from sqlalchemy.sql import column, text
 from sqlalchemy.schema import CreateTable, CreateIndex
+from sqlalchemy import exc
 
 
 class BatchApplyTest(TestBase):
@@ -158,6 +161,15 @@ class BatchApplyTest(TestBase):
         )
         return ApplyBatchImpl(t, table_args, table_kwargs)
 
+    def _server_default_fixture(self, table_args=(), table_kwargs={}):
+        m = MetaData()
+        t = Table(
+            'tname', m,
+            Column('id', Integer, primary_key=True),
+            Column('thing', String(), server_default='')
+        )
+        return ApplyBatchImpl(t, table_args, table_kwargs)
+
     def _assert_impl(self, impl, colnames=None,
                      ddl_contains=None, ddl_not_contains=None,
                      dialect='default', schema=None):
@@ -177,8 +189,12 @@ class BatchApplyTest(TestBase):
         create_stmt = re.sub(r'[\n\t]', '', create_stmt)
 
         idx_stmt = ""
-        for idx in impl.new_table.indexes:
+        for idx in impl.indexes.values():
             idx_stmt += str(CreateIndex(idx).compile(dialect=context.dialect))
+        for idx in impl.new_indexes.values():
+            impl.new_table.name = impl.table.name
+            idx_stmt += str(CreateIndex(idx).compile(dialect=context.dialect))
+            impl.new_table.name = '_alembic_batch_temp'
         idx_stmt = re.sub(r'[\n\t]', '', idx_stmt)
 
         if ddl_contains:
@@ -189,8 +205,6 @@ class BatchApplyTest(TestBase):
         expected = [
             create_stmt,
         ]
-        if impl.new_table.indexes:
-            expected.append(idx_stmt)
 
         if schema:
             args = {"schema": "%s." % schema}
@@ -222,6 +236,8 @@ class BatchApplyTest(TestBase):
             'ALTER TABLE %(schema)s_alembic_batch_temp '
             'RENAME TO %(schema)stname' % args
         ])
+        if idx_stmt:
+            expected.append(idx_stmt)
         context.assert_(*expected)
         return impl.new_table
 
@@ -250,6 +266,18 @@ class BatchApplyTest(TestBase):
                 in new_table.constraints
                 if isinstance(const, CheckConstraint)]),
             1)
+
+    def test_change_type_schematype_to_non(self):
+        impl = self._boolean_fixture()
+        impl.alter_column('tname', 'flag', type_=Integer)
+        new_table = self._assert_impl(
+            impl, colnames=['id', 'flag'],
+            ddl_not_contains="CHECK")
+        assert new_table.c.flag.type._type_affinity is Integer
+
+        # NOTE: we can't do test_change_type_non_to_schematype
+        # at this level because the "add_constraint" part of this
+        # comes from toimpl.py, which we aren't testing here
 
     def test_rename_col_boolean_no_ck(self):
         impl = self._boolean_no_ck_fixture()
@@ -327,10 +355,26 @@ class BatchApplyTest(TestBase):
         impl = self._simple_fixture()
         col = Column('g', Integer)
         # operations.add_column produces a table
-        t = self.op._table('tname', col)  # noqa
+        t = self.op.schema_obj.table('tname', col)  # noqa
         impl.add_column('tname', col)
         new_table = self._assert_impl(impl, colnames=['id', 'x', 'y', 'g'])
         eq_(new_table.c.g.name, 'g')
+
+    def test_add_server_default(self):
+        impl = self._simple_fixture()
+        impl.alter_column('tname', 'y', server_default="10")
+        new_table = self._assert_impl(
+            impl, ddl_contains="DEFAULT '10'")
+        eq_(
+            new_table.c.y.server_default.arg, "10"
+        )
+
+    def test_drop_server_default(self):
+        impl = self._server_default_fixture()
+        impl.alter_column('tname', 'thing', server_default=None)
+        new_table = self._assert_impl(
+            impl, colnames=['id', 'thing'], ddl_not_contains="DEFAULT")
+        eq_(new_table.c.thing.server_default, None)
 
     def test_rename_col_pk(self):
         impl = self._simple_fixture()
@@ -417,7 +461,7 @@ class BatchApplyTest(TestBase):
     def test_add_fk(self):
         impl = self._simple_fixture()
         impl.add_column('tname', Column('user_id', Integer))
-        fk = self.op._foreign_key_constraint(
+        fk = self.op.schema_obj.foreign_key_constraint(
             'fk1', 'tname', 'user',
             ['user_id'], ['id'])
         impl.add_constraint(fk)
@@ -444,7 +488,7 @@ class BatchApplyTest(TestBase):
 
     def test_add_uq(self):
         impl = self._simple_fixture()
-        uq = self.op._unique_constraint(
+        uq = self.op.schema_obj.unique_constraint(
             'uq1', 'tname', ['y']
         )
 
@@ -456,7 +500,7 @@ class BatchApplyTest(TestBase):
     def test_drop_uq(self):
         impl = self._uq_fixture()
 
-        uq = self.op._unique_constraint(
+        uq = self.op.schema_obj.unique_constraint(
             'uq1', 'tname', ['y']
         )
         impl.drop_constraint(uq)
@@ -464,11 +508,11 @@ class BatchApplyTest(TestBase):
             impl, colnames=['id', 'x', 'y'],
             ddl_not_contains="CONSTRAINT uq1 UNIQUE")
 
-    def test_add_index(self):
+    def test_create_index(self):
         impl = self._simple_fixture()
-        ix = self.op._index('ix1', 'tname', ['y'])
+        ix = self.op.schema_obj.index('ix1', 'tname', ['y'])
 
-        impl.add_index(ix)
+        impl.create_index(ix)
         self._assert_impl(
             impl, colnames=['id', 'x', 'y'],
             ddl_contains="CREATE INDEX ix1")
@@ -476,7 +520,7 @@ class BatchApplyTest(TestBase):
     def test_drop_index(self):
         impl = self._ix_fixture()
 
-        ix = self.op._index('ix1', 'tname', ['y'])
+        ix = self.op.schema_obj.index('ix1', 'tname', ['y'])
         impl.drop_index(ix)
         self._assert_impl(
             impl, colnames=['id', 'x', 'y'],
@@ -495,12 +539,14 @@ class BatchAPITest(TestBase):
 
     @contextmanager
     def _fixture(self, schema=None):
-        migration_context = mock.Mock(opts={})
+        migration_context = mock.Mock(
+            opts={}, impl=mock.MagicMock(__dialect__='sqlite'))
         op = Operations(migration_context)
         batch = op.batch_alter_table(
             'tname', recreate='never', schema=schema).__enter__()
 
-        with mock.patch("alembic.operations.sa_schema") as mock_schema:
+        mock_schema = mock.MagicMock()
+        with mock.patch("alembic.operations.schemaobj.sa_schema", mock_schema):
             yield batch
         batch.impl.flush()
         self.mock_schema = mock_schema
@@ -624,6 +670,50 @@ class BatchAPITest(TestBase):
                 self.mock_schema.UniqueConstraint())]
         )
 
+    def test_create_pk(self):
+        with self._fixture() as batch:
+            batch.create_primary_key('pk1', ['a', 'b'])
+
+        eq_(
+            self.mock_schema.Table().c.__getitem__.mock_calls,
+            [mock.call('a'), mock.call('b')]
+        )
+
+        eq_(
+            self.mock_schema.PrimaryKeyConstraint.mock_calls,
+            [
+                mock.call(
+                    self.mock_schema.Table().c.__getitem__(),
+                    self.mock_schema.Table().c.__getitem__(),
+                    name='pk1'
+                )
+            ]
+        )
+        eq_(
+            batch.impl.operations.impl.mock_calls,
+            [mock.call.add_constraint(
+                self.mock_schema.PrimaryKeyConstraint())]
+        )
+
+    def test_create_check(self):
+        expr = text("a > b")
+        with self._fixture() as batch:
+            batch.create_check_constraint('ck1', expr)
+
+        eq_(
+            self.mock_schema.CheckConstraint.mock_calls,
+            [
+                mock.call(
+                    expr, name="ck1"
+                )
+            ]
+        )
+        eq_(
+            batch.impl.operations.impl.mock_calls,
+            [mock.call.add_constraint(
+                self.mock_schema.CheckConstraint())]
+        )
+
     def test_drop_constraint(self):
         with self._fixture() as batch:
             batch.drop_constraint('uq1')
@@ -637,6 +727,171 @@ class BatchAPITest(TestBase):
         eq_(
             batch.impl.operations.impl.mock_calls,
             [mock.call.drop_constraint(self.mock_schema.Constraint())]
+        )
+
+
+class CopyFromTest(TestBase):
+    __requires__ = ('sqlalchemy_08', )
+
+    def _fixture(self):
+        self.metadata = MetaData()
+        self.table = Table(
+            'foo', self.metadata,
+            Column('id', Integer, primary_key=True),
+            Column('data', String(50)),
+            Column('x', Integer),
+        )
+
+        context = op_fixture(dialect="sqlite", as_sql=True)
+        self.op = Operations(context)
+        return context
+
+    def test_change_type(self):
+        context = self._fixture()
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.alter_column('data', type_=Integer)
+
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data INTEGER, x INTEGER, PRIMARY KEY (id))',
+            'INSERT INTO _alembic_batch_temp (id, data, x) SELECT foo.id, '
+            'CAST(foo.data AS INTEGER) AS anon_1, foo.x FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
+        )
+
+    def test_change_type_from_schematype(self):
+        context = self._fixture()
+        self.table.append_column(
+            Column('y', Boolean(
+                create_constraint=True, name="ck1")))
+
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.alter_column(
+                'y', type_=Integer,
+                existing_type=Boolean(
+                    create_constraint=True, name="ck1"))
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data VARCHAR(50), x INTEGER, y INTEGER, PRIMARY KEY (id))',
+            'INSERT INTO _alembic_batch_temp (id, data, x, y) SELECT foo.id, '
+            'foo.data, foo.x, CAST(foo.y AS INTEGER) AS anon_1 FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
+        )
+
+    def test_change_type_to_schematype(self):
+        context = self._fixture()
+        self.table.append_column(
+            Column('y', Integer))
+
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.alter_column(
+                'y', existing_type=Integer,
+                type_=Boolean(
+                    create_constraint=True, name="ck1"))
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data VARCHAR(50), x INTEGER, y BOOLEAN, PRIMARY KEY (id), '
+            'CONSTRAINT ck1 CHECK (y IN (0, 1)))',
+            'INSERT INTO _alembic_batch_temp (id, data, x, y) SELECT foo.id, '
+            'foo.data, foo.x, CAST(foo.y AS BOOLEAN) AS anon_1 FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
+        )
+
+    def test_create_drop_index_w_always(self):
+        context = self._fixture()
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table, recreate='always') as batch_op:
+            batch_op.create_index(
+                'ix_data', ['data'], unique=True)
+
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data VARCHAR(50), '
+            'x INTEGER, PRIMARY KEY (id))',
+            'INSERT INTO _alembic_batch_temp (id, data, x) '
+            'SELECT foo.id, foo.data, foo.x FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo',
+            'CREATE UNIQUE INDEX ix_data ON foo (data)',
+        )
+
+        context.clear_assertions()
+
+        Index('ix_data', self.table.c.data, unique=True)
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table, recreate='always') as batch_op:
+            batch_op.drop_index('ix_data')
+
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data VARCHAR(50), x INTEGER, PRIMARY KEY (id))',
+            'INSERT INTO _alembic_batch_temp (id, data, x) '
+            'SELECT foo.id, foo.data, foo.x FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
+        )
+
+    def test_create_drop_index_wo_always(self):
+        context = self._fixture()
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.create_index(
+                'ix_data', ['data'], unique=True)
+
+        context.assert_(
+            'CREATE UNIQUE INDEX ix_data ON foo (data)'
+        )
+
+        context.clear_assertions()
+
+        Index('ix_data', self.table.c.data, unique=True)
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.drop_index('ix_data')
+
+        context.assert_(
+            'DROP INDEX ix_data'
+        )
+
+    def test_create_drop_index_w_other_ops(self):
+        context = self._fixture()
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.alter_column('data', type_=Integer)
+            batch_op.create_index(
+                'ix_data', ['data'], unique=True)
+
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data INTEGER, x INTEGER, PRIMARY KEY (id))',
+            'INSERT INTO _alembic_batch_temp (id, data, x) SELECT foo.id, '
+            'CAST(foo.data AS INTEGER) AS anon_1, foo.x FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo',
+            'CREATE UNIQUE INDEX ix_data ON foo (data)',
+        )
+
+        context.clear_assertions()
+
+        Index('ix_data', self.table.c.data, unique=True)
+        with self.op.batch_alter_table(
+                "foo", copy_from=self.table) as batch_op:
+            batch_op.drop_index('ix_data')
+            batch_op.alter_column('data', type_=String)
+
+        context.assert_(
+            'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
+            'data VARCHAR, x INTEGER, PRIMARY KEY (id))',
+            'INSERT INTO _alembic_batch_temp (id, data, x) SELECT foo.id, '
+            'CAST(foo.data AS VARCHAR) AS anon_1, foo.x FROM foo',
+            'DROP TABLE foo',
+            'ALTER TABLE _alembic_batch_temp RENAME TO foo'
         )
 
 
@@ -669,6 +924,107 @@ class BatchRoundTripTest(TestBase):
         context = MigrationContext.configure(self.conn)
         self.op = Operations(context)
 
+    @contextmanager
+    def _sqlite_referential_integrity(self):
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            yield
+        finally:
+            self.conn.execute("PRAGMA foreign_keys=OFF")
+
+    def _no_pk_fixture(self):
+        nopk = Table(
+            'nopk', self.metadata,
+            Column('a', Integer),
+            Column('b', Integer),
+            Column('c', Integer),
+            mysql_engine='InnoDB'
+        )
+        nopk.create(self.conn)
+        self.conn.execute(
+            nopk.insert(),
+            [
+                {"a": 1, "b": 2, "c": 3},
+                {"a": 2, "b": 4, "c": 5},
+            ]
+
+        )
+        return nopk
+
+    def _table_w_index_fixture(self):
+        t = Table(
+            't_w_ix', self.metadata,
+            Column('id', Integer, primary_key=True),
+            Column('thing', Integer),
+            Column('data', String(20)),
+        )
+        Index('ix_thing', t.c.thing)
+        t.create(self.conn)
+        return t
+
+    def _boolean_fixture(self):
+        t = Table(
+            'hasbool', self.metadata,
+            Column('x', Boolean(create_constraint=True, name='ck1')),
+            Column('y', Integer)
+        )
+        t.create(self.conn)
+
+    def _int_to_boolean_fixture(self):
+        t = Table(
+            'hasbool', self.metadata,
+            Column('x', Integer)
+        )
+        t.create(self.conn)
+
+    def test_change_type_boolean_to_int(self):
+        self._boolean_fixture()
+        with self.op.batch_alter_table(
+                "hasbool"
+        ) as batch_op:
+            batch_op.alter_column(
+                'x', type_=Integer, existing_type=Boolean(
+                    create_constraint=True, name='ck1'))
+        insp = Inspector.from_engine(config.db)
+
+        eq_(
+            [c['type']._type_affinity for c in insp.get_columns('hasbool')
+             if c['name'] == 'x'],
+            [Integer]
+        )
+
+    def test_drop_col_schematype(self):
+        self._boolean_fixture()
+        with self.op.batch_alter_table(
+                "hasbool"
+        ) as batch_op:
+            batch_op.drop_column('x')
+        insp = Inspector.from_engine(config.db)
+
+        assert 'x' not in (c['name'] for c in insp.get_columns('hasbool'))
+
+    def test_change_type_int_to_boolean(self):
+        self._int_to_boolean_fixture()
+        with self.op.batch_alter_table(
+                "hasbool"
+        ) as batch_op:
+            batch_op.alter_column(
+                'x', type_=Boolean(create_constraint=True, name='ck1'))
+        insp = Inspector.from_engine(config.db)
+
+        if exclusions.against(config, "sqlite"):
+            eq_(
+                [c['type']._type_affinity for
+                 c in insp.get_columns('hasbool') if c['name'] == 'x'],
+                [Boolean]
+            )
+        elif exclusions.against(config, "mysql"):
+            eq_(
+                [c['type']._type_affinity for
+                 c in insp.get_columns('hasbool') if c['name'] == 'x'],
+                [Integer]
+            )
+
     def tearDown(self):
         self.metadata.drop_all(self.conn)
         self.conn.close()
@@ -680,6 +1036,25 @@ class BatchRoundTripTest(TestBase):
             data
         )
 
+    def test_ix_existing(self):
+        self._table_w_index_fixture()
+
+        with self.op.batch_alter_table("t_w_ix") as batch_op:
+            batch_op.alter_column('data', type_=String(30))
+            batch_op.create_index("ix_data", ["data"])
+
+        insp = Inspector.from_engine(config.db)
+        eq_(
+            set(
+                (ix['name'], tuple(ix['column_names'])) for ix in
+                insp.get_indexes('t_w_ix')
+            ),
+            set([
+                ('ix_data', ('data',)),
+                ('ix_thing', ('thing', ))
+            ])
+        )
+
     def test_fk_points_to_me_auto(self):
         self._test_fk_points_to_me("auto")
 
@@ -689,6 +1064,14 @@ class BatchRoundTripTest(TestBase):
     @config.requirements.no_referential_integrity
     def test_fk_points_to_me_recreate(self):
         self._test_fk_points_to_me("always")
+
+    @exclusions.only_on("sqlite")
+    @exclusions.fails(
+        "intentionally asserting that this "
+        "doesn't work w/ pragma foreign keys")
+    def test_fk_points_to_me_sqlite_refinteg(self):
+        with self._sqlite_referential_integrity():
+            self._test_fk_points_to_me("auto")
 
     def _test_fk_points_to_me(self, recreate):
         bar = Table(
@@ -703,6 +1086,55 @@ class BatchRoundTripTest(TestBase):
         with self.op.batch_alter_table("foo", recreate=recreate) as batch_op:
             batch_op.alter_column(
                 'data', new_column_name='newdata', existing_type=String(50))
+
+        insp = Inspector.from_engine(self.conn)
+        eq_(
+            [(key['referred_table'],
+             key['referred_columns'], key['constrained_columns'])
+             for key in insp.get_foreign_keys('bar')],
+            [('foo', ['id'], ['foo_id'])]
+        )
+
+    def test_selfref_fk_auto(self):
+        self._test_selfref_fk("auto")
+
+    @config.requirements.no_referential_integrity
+    def test_selfref_fk_recreate(self):
+        self._test_selfref_fk("always")
+
+    @exclusions.only_on("sqlite")
+    @exclusions.fails(
+        "intentionally asserting that this "
+        "doesn't work w/ pragma foreign keys")
+    def test_selfref_fk_sqlite_refinteg(self):
+        with self._sqlite_referential_integrity():
+            self._test_selfref_fk("auto")
+
+    def _test_selfref_fk(self, recreate):
+        bar = Table(
+            'bar', self.metadata,
+            Column('id', Integer, primary_key=True),
+            Column('bar_id', Integer, ForeignKey('bar.id')),
+            Column('data', String(50)),
+            mysql_engine='InnoDB'
+        )
+        bar.create(self.conn)
+        self.conn.execute(bar.insert(), {'id': 1, 'data': 'x', 'bar_id': None})
+        self.conn.execute(bar.insert(), {'id': 2, 'data': 'y', 'bar_id': 1})
+
+        with self.op.batch_alter_table("bar", recreate=recreate) as batch_op:
+            batch_op.alter_column(
+                'data', new_column_name='newdata', existing_type=String(50))
+
+        insp = Inspector.from_engine(self.conn)
+
+        insp = Inspector.from_engine(self.conn)
+        eq_(
+            [(key['referred_table'],
+             key['referred_columns'], key['constrained_columns'])
+             for key in insp.get_foreign_keys('bar')],
+            [('bar', ['id'], ['bar_id'])]
+        )
 
     def test_change_type(self):
         with self.op.batch_alter_table("foo") as batch_op:
@@ -727,6 +1159,32 @@ class BatchRoundTripTest(TestBase):
             {"id": 4, "x": 8},
             {"id": 5, "x": 9}
         ])
+
+    def test_add_pk_constraint(self):
+        self._no_pk_fixture()
+        with self.op.batch_alter_table("nopk", recreate="always") as batch_op:
+            batch_op.create_primary_key('newpk', ['a', 'b'])
+
+        pk_const = Inspector.from_engine(self.conn).get_pk_constraint('nopk')
+        with config.requirements.reflects_pk_names.fail_if():
+            eq_(pk_const['name'], 'newpk')
+        eq_(pk_const['constrained_columns'], ['a', 'b'])
+
+    @config.requirements.check_constraints_w_enforcement
+    def test_add_ck_constraint(self):
+        with self.op.batch_alter_table("foo", recreate="always") as batch_op:
+            batch_op.create_check_constraint("newck", text("x > 0"))
+
+        # we dont support reflection of CHECK constraints
+        # so test this by just running invalid data in
+        foo = self.metadata.tables['foo']
+
+        assert_raises_message(
+            exc.IntegrityError,
+            "newck",
+            self.conn.execute,
+            foo.insert(), {"id": 6, "data": 5, "x": -2}
+        )
 
     @config.requirements.sqlalchemy_094
     @config.requirements.unnamed_constraints
@@ -876,6 +1334,43 @@ class BatchRoundTripTest(TestBase):
             {"id": 5, "data": "d5", "x": 9, 'data2': 'hi'}
         ])
 
+    def test_create_drop_index(self):
+        insp = Inspector.from_engine(config.db)
+        eq_(
+            insp.get_indexes('foo'), []
+        )
+
+        with self.op.batch_alter_table("foo", recreate='always') as batch_op:
+            batch_op.create_index(
+                'ix_data', ['data'], unique=True)
+
+        self._assert_data([
+            {"id": 1, "data": "d1", "x": 5},
+            {"id": 2, "data": "22", "x": 6},
+            {"id": 3, "data": "8.5", "x": 7},
+            {"id": 4, "data": "9.46", "x": 8},
+            {"id": 5, "data": "d5", "x": 9}
+        ])
+
+        insp = Inspector.from_engine(config.db)
+        eq_(
+            [
+                dict(unique=ix['unique'],
+                     name=ix['name'],
+                     column_names=ix['column_names'])
+                for ix in insp.get_indexes('foo')
+            ],
+            [{'unique': True, 'name': 'ix_data', 'column_names': ['data']}]
+        )
+
+        with self.op.batch_alter_table("foo", recreate='always') as batch_op:
+            batch_op.drop_index('ix_data')
+
+        insp = Inspector.from_engine(config.db)
+        eq_(
+            insp.get_indexes('foo'), []
+        )
+
 
 class BatchRoundTripMySQLTest(BatchRoundTripTest):
     __only_on__ = "mysql"
@@ -892,6 +1387,9 @@ class BatchRoundTripMySQLTest(BatchRoundTripTest):
     def test_change_type(self):
         super(BatchRoundTripMySQLTest, self).test_change_type()
 
+    def test_create_drop_index(self):
+        super(BatchRoundTripMySQLTest, self).test_create_drop_index()
+
 
 class BatchRoundTripPostgresqlTest(BatchRoundTripTest):
     __only_on__ = "postgresql"
@@ -900,3 +1398,15 @@ class BatchRoundTripPostgresqlTest(BatchRoundTripTest):
     def test_change_type(self):
         super(BatchRoundTripPostgresqlTest, self).test_change_type()
 
+    def test_create_drop_index(self):
+        super(BatchRoundTripPostgresqlTest, self).test_create_drop_index()
+
+    @exclusions.fails()
+    def test_change_type_int_to_boolean(self):
+        super(BatchRoundTripPostgresqlTest, self).\
+            test_change_type_int_to_boolean()
+
+    @exclusions.fails()
+    def test_change_type_boolean_to_int(self):
+        super(BatchRoundTripPostgresqlTest, self).\
+            test_change_type_boolean_to_int()

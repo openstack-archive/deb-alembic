@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, func
+from sqlalchemy import Integer, func, Boolean
 from alembic.testing.fixtures import TestBase
 from alembic.testing import config
 from sqlalchemy import TIMESTAMP, MetaData, Table, Column, text
@@ -102,6 +102,17 @@ class MySQLOpTest(TestBase):
             'ALTER TABLE t ALTER COLUMN c DROP DEFAULT'
         )
 
+    def test_alter_column_remove_schematype(self):
+        context = op_fixture('mysql')
+        op.alter_column(
+            "t", "c",
+            type_=Integer,
+            existing_type=Boolean(create_constraint=True, name="ck1"),
+            server_default=None)
+        context.assert_(
+            'ALTER TABLE t MODIFY c INTEGER NULL'
+        )
+
     def test_alter_column_modify_default(self):
         context = op_fixture('mysql')
         # notice we dont need the existing type on this one...
@@ -167,7 +178,7 @@ class MySQLOpTest(TestBase):
         context = op_fixture('mysql')
         op.drop_constraint('primary', 't1', type_='primary')
         context.assert_(
-            "ALTER TABLE t1 DROP PRIMARY KEY "
+            "ALTER TABLE t1 DROP PRIMARY KEY"
         )
 
     def test_drop_unique(self):

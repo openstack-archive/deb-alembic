@@ -41,6 +41,10 @@ class DefaultRequirements(SuiteRequirements):
         )
 
     @property
+    def check_constraints_w_enforcement(self):
+        return exclusions.fails_on("mysql")
+
+    @property
     def unnamed_constraints(self):
         """constraints without names are supported."""
         return exclusions.only_on(['sqlite'])
@@ -49,3 +53,45 @@ class DefaultRequirements(SuiteRequirements):
     def fk_names(self):
         """foreign key constraints always have names in the DB"""
         return exclusions.fails_on('sqlite')
+
+    @property
+    def reflects_fk_options(self):
+        return exclusions.only_on(['postgresql', 'mysql'])
+
+    @property
+    def fk_initially(self):
+        """backend supports INITIALLY option in foreign keys"""
+        return exclusions.only_on(['postgresql'])
+
+    @property
+    def fk_deferrable(self):
+        """backend supports DEFERRABLE option in foreign keys"""
+        return exclusions.only_on(['postgresql'])
+
+    @property
+    def reflects_unique_constraints_unambiguously(self):
+        return exclusions.fails_on("mysql")
+
+    @property
+    def reflects_pk_names(self):
+        """Target driver reflects the name of primary key constraints."""
+
+        return exclusions.fails_on_everything_except(
+            'postgresql', 'oracle', 'mssql', 'sybase',
+            lambda config: (
+                util.sqla_110 and exclusions.against(config, "sqlite")
+            )
+        )
+
+    @property
+    def postgresql_uuid_ossp(self):
+        def check_uuid_ossp(config):
+            if not exclusions.against(config, "postgresql"):
+                return False
+            try:
+                config.db.execute("SELECT uuid_generate_v4()")
+                return True
+            except:
+                return False
+
+        return exclusions.only_if(check_uuid_ossp)

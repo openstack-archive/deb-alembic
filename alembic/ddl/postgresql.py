@@ -1,10 +1,17 @@
 import re
 
-from .. import compat
+from ..util import compat
+from .. import util
 from .base import compiles, alter_table, format_table_name, RenameTable
 from .impl import DefaultImpl
 from sqlalchemy.dialects.postgresql import INTEGER, BIGINT
-from sqlalchemy import text, Numeric
+from sqlalchemy import text, Numeric, Column
+
+if compat.sqla_08:
+    from sqlalchemy.sql.expression import UnaryExpression
+else:
+    from sqlalchemy.sql.expression import _UnaryExpression as UnaryExpression
+
 import logging
 
 log = logging.getLogger(__name__)
@@ -16,7 +23,8 @@ class PostgresqlImpl(DefaultImpl):
 
     def prep_table_for_batch(self, table):
         for constraint in table.constraints:
-            self.drop_constraint(constraint)
+            if constraint.name is not None:
+                self.drop_constraint(constraint)
 
     def compare_server_default(self, inspector_column,
                                metadata_column,
@@ -29,8 +37,12 @@ class PostgresqlImpl(DefaultImpl):
 
         conn_col_default = rendered_inspector_default
 
+        defaults_equal = conn_col_default == rendered_metadata_default
+        if defaults_equal:
+            return False
+
         if None in (conn_col_default, rendered_metadata_default):
-            return conn_col_default != rendered_metadata_default
+            return not defaults_equal
 
         if metadata_column.server_default is not None and \
             isinstance(metadata_column.server_default.arg,
@@ -39,7 +51,8 @@ class PostgresqlImpl(DefaultImpl):
                 not isinstance(inspector_column.type, Numeric):
                 # don't single quote if the column type is float/numeric,
                 # otherwise a comparison such as SELECT 5 = '5.0' will fail
-            rendered_metadata_default = "'%s'" % rendered_metadata_default
+            rendered_metadata_default = re.sub(
+                r"^u?'?|'?$", "'", rendered_metadata_default)
 
         return not self.connection.scalar(
             "SELECT %s = %s" % (
@@ -71,9 +84,8 @@ class PostgresqlImpl(DefaultImpl):
                         log.info(
                             "Detected sequence named '%s' as "
                             "owned by integer column '%s(%s)', "
-                            "assuming SERIAL and omitting" % (
-                                seqname, table.name, colname
-                            ))
+                            "assuming SERIAL and omitting",
+                            seqname, table.name, colname)
                         # sequence, and the owner is this column,
                         # its a SERIAL - whack it!
                         del column_info['default']
@@ -96,6 +108,21 @@ class PostgresqlImpl(DefaultImpl):
         )
         for name, (uq, ix) in doubled_constraints.items():
             conn_indexes.remove(ix)
+
+        for idx in list(metadata_indexes):
+            if idx.name in conn_indexes_by_name:
+                continue
+            if compat.sqla_08:
+                exprs = idx.expressions
+            else:
+                exprs = idx.columns
+            for expr in exprs:
+                if not isinstance(expr, (Column, UnaryExpression)):
+                    util.warn(
+                        "autogenerate skipping functional index %s; "
+                        "not supported by SQLAlchemy reflection" % idx.name
+                    )
+                    metadata_indexes.discard(idx)
 
 
 @compiles(RenameTable, "postgresql")

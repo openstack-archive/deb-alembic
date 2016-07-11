@@ -2,13 +2,15 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy import types as sqltypes
 from sqlalchemy import schema
 
-from ..compat import string_types
+from ..util.compat import string_types
 from .. import util
 from .impl import DefaultImpl
 from .base import ColumnNullable, ColumnName, ColumnDefault, \
     ColumnType, AlterColumn, format_column_name, \
     format_server_default
 from .base import alter_table
+from ..autogenerate import compare
+from ..util.sqla_compat import _is_type_bound
 
 
 class MySQLImpl(DefaultImpl):
@@ -22,11 +24,12 @@ class MySQLImpl(DefaultImpl):
                      name=None,
                      type_=None,
                      schema=None,
-                     autoincrement=None,
                      existing_type=None,
                      existing_server_default=None,
                      existing_nullable=None,
-                     existing_autoincrement=None
+                     autoincrement=None,
+                     existing_autoincrement=None,
+                     **kw
                      ):
         if name is not None:
             self._exec(
@@ -71,6 +74,12 @@ class MySQLImpl(DefaultImpl):
                     schema=schema,
                 )
             )
+
+    def drop_constraint(self, const):
+        if isinstance(const, schema.CheckConstraint) and _is_type_bound(const):
+            return
+
+        super(MySQLImpl, self).drop_constraint(const)
 
     def compare_server_default(self, inspector_column,
                                metadata_column,
@@ -122,6 +131,62 @@ class MySQLImpl(DefaultImpl):
         for idx in list(metadata_indexes):
             if idx.name in removed:
                 metadata_indexes.remove(idx)
+
+        # then dedupe unique indexes vs. constraints, since MySQL
+        # doesn't really have unique constraints as a separate construct.
+        # but look in the metadata and try to maintain constructs
+        # that already seem to be defined one way or the other
+        # on that side.  See #276
+        metadata_uq_names = set([
+            cons.name for cons in metadata_unique_constraints
+            if cons.name is not None])
+
+        unnamed_metadata_uqs = set([
+            compare._uq_constraint_sig(cons).sig
+            for cons in metadata_unique_constraints
+            if cons.name is None
+        ])
+
+        metadata_ix_names = set([
+            cons.name for cons in metadata_indexes if cons.unique])
+        conn_uq_names = dict(
+            (cons.name, cons) for cons in conn_unique_constraints
+        )
+        conn_ix_names = dict(
+            (cons.name, cons) for cons in conn_indexes if cons.unique
+        )
+
+        for overlap in set(conn_uq_names).intersection(conn_ix_names):
+            if overlap not in metadata_uq_names:
+                if compare._uq_constraint_sig(conn_uq_names[overlap]).sig \
+                        not in unnamed_metadata_uqs:
+
+                    conn_unique_constraints.discard(conn_uq_names[overlap])
+            elif overlap not in metadata_ix_names:
+                conn_indexes.discard(conn_ix_names[overlap])
+
+    def correct_for_autogen_foreignkeys(self, conn_fks, metadata_fks):
+        conn_fk_by_sig = dict(
+            (compare._fk_constraint_sig(fk).sig, fk) for fk in conn_fks
+        )
+        metadata_fk_by_sig = dict(
+            (compare._fk_constraint_sig(fk).sig, fk) for fk in metadata_fks
+        )
+
+        for sig in set(conn_fk_by_sig).intersection(metadata_fk_by_sig):
+            mdfk = metadata_fk_by_sig[sig]
+            cnfk = conn_fk_by_sig[sig]
+            # MySQL considers RESTRICT to be the default and doesn't
+            # report on it.  if the model has explicit RESTRICT and
+            # the conn FK has None, set it to RESTRICT
+            if mdfk.ondelete is not None and \
+                    mdfk.ondelete.lower() == 'restrict' and \
+                    cnfk.ondelete is None:
+                cnfk.ondelete = 'RESTRICT'
+            if mdfk.onupdate is not None and \
+                    mdfk.onupdate.lower() == 'restrict' and \
+                    cnfk.onupdate is None:
+                cnfk.onupdate = 'RESTRICT'
 
 
 class MySQLAlterDefault(AlterColumn):
@@ -250,3 +315,5 @@ def _mysql_drop_constraint(element, compiler, **kw):
         raise NotImplementedError(
             "No generic 'DROP CONSTRAINT' in MySQL - "
             "please specify constraint type")
+
+

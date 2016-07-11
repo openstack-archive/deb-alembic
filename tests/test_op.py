@@ -7,10 +7,11 @@ from sqlalchemy import event
 
 from alembic import op
 from alembic.testing.fixtures import op_fixture
-from alembic.testing import eq_, assert_raises_message
+from alembic.testing import eq_, assert_raises_message, is_
 from alembic.testing import mock
 from alembic.testing.fixtures import TestBase
 from alembic.testing import config
+from alembic.operations import schemaobj, ops
 
 
 @event.listens_for(Table, "after_parent_attach")
@@ -524,7 +525,8 @@ class OpTest(TestBase):
     def test_add_foreign_key_dialect_kw(self):
         op_fixture()
         with mock.patch(
-                "alembic.operations.sa_schema.ForeignKeyConstraint") as fkc:
+                "sqlalchemy.schema.ForeignKeyConstraint"
+        ) as fkc:
             op.create_foreign_key('fk_test', 't1', 't2',
                                   ['foo', 'bar'], ['bat', 'hoho'],
                                   foobar_arg='xyz')
@@ -595,9 +597,67 @@ class OpTest(TestBase):
             "ALTER TABLE t1 ADD CONSTRAINT uk_test UNIQUE (foo, bar)"
         )
 
+    def test_add_foreign_key_legacy_kwarg(self):
+        context = op_fixture()
+
+        op.create_foreign_key(
+            name='some_fk',
+            source='some_table',
+            referent='referred_table',
+            local_cols=['a', 'b'],
+            remote_cols=['c', 'd'],
+            ondelete='CASCADE'
+        )
+        context.assert_(
+            "ALTER TABLE some_table ADD CONSTRAINT some_fk "
+            "FOREIGN KEY(a, b) REFERENCES referred_table (c, d) "
+            "ON DELETE CASCADE"
+        )
+
+    def test_add_unique_constraint_legacy_kwarg(self):
+        context = op_fixture()
+        op.create_unique_constraint(
+            name='uk_test',
+            source='t1',
+            local_cols=['foo', 'bar'])
+        context.assert_(
+            "ALTER TABLE t1 ADD CONSTRAINT uk_test UNIQUE (foo, bar)"
+        )
+
+    def test_drop_constraint_legacy_kwarg(self):
+        context = op_fixture()
+        op.drop_constraint(name='pk_name',
+                           table_name='sometable',
+                           type_='primary')
+        context.assert_(
+            "ALTER TABLE sometable DROP CONSTRAINT pk_name"
+        )
+
+    def test_create_pk_legacy_kwarg(self):
+        context = op_fixture()
+        op.create_primary_key(name=None,
+                              table_name='sometable',
+                              cols=['router_id', 'l3_agent_id'])
+        context.assert_(
+            "ALTER TABLE sometable ADD PRIMARY KEY (router_id, l3_agent_id)"
+        )
+
+    def test_legacy_kwarg_catches_arg_missing(self):
+        op_fixture()
+
+        assert_raises_message(
+            TypeError,
+            "missing required positional argument: columns",
+            op.create_primary_key,
+            name=None,
+            table_name='sometable',
+            wrong_cols=['router_id', 'l3_agent_id']
+        )
+
     def test_add_unique_constraint_schema(self):
         context = op_fixture()
-        op.create_unique_constraint('uk_test', 't1', ['foo', 'bar'], schema='foo')
+        op.create_unique_constraint(
+            'uk_test', 't1', ['foo', 'bar'], schema='foo')
         context.assert_(
             "ALTER TABLE foo.t1 ADD CONSTRAINT uk_test UNIQUE (foo, bar)"
         )
@@ -808,14 +868,133 @@ class OpTest(TestBase):
         op.drop_constraint("f1", "t1", type_="foreignkey")
         context.assert_("ALTER TABLE t1 DROP FOREIGN KEY f1")
 
-        assert_raises_message(
-            TypeError,
-            r"Unknown arguments: badarg\d, badarg\d",
-            op.alter_column, "t", "c", badarg1="x", badarg2="y"
-        )
-
     @config.requirements.fail_before_sqla_084
     def test_naming_changes_drop_idx(self):
         context = op_fixture('mssql')
         op.drop_index('ik_test', tablename='t1')
         context.assert_("DROP INDEX ik_test ON t1")
+
+
+class SQLModeOpTest(TestBase):
+    @config.requirements.sqlalchemy_09
+    def test_auto_literals(self):
+        context = op_fixture(as_sql=True, literal_binds=True)
+        from sqlalchemy.sql import table, column
+        from sqlalchemy import String, Integer
+
+        account = table('account',
+                        column('name', String),
+                        column('id', Integer)
+                        )
+        op.execute(
+            account.update().
+            where(account.c.name == op.inline_literal('account 1')).
+            values({'name': op.inline_literal('account 2')})
+        )
+        op.execute(text("update table set foo=:bar").bindparams(bar='bat'))
+        context.assert_(
+            "UPDATE account SET name='account 2' "
+            "WHERE account.name = 'account 1'",
+            "update table set foo='bat'"
+        )
+
+    def test_create_table_literal_binds(self):
+        context = op_fixture(as_sql=True, literal_binds=True)
+
+        op.create_table(
+            "some_table",
+            Column('id', Integer, primary_key=True),
+            Column('st_id', Integer, ForeignKey('some_table.id'))
+        )
+
+        context.assert_(
+            "CREATE TABLE some_table (id INTEGER NOT NULL, st_id INTEGER, "
+            "PRIMARY KEY (id), FOREIGN KEY(st_id) REFERENCES some_table (id))"
+        )
+
+
+class CustomOpTest(TestBase):
+    def test_custom_op(self):
+        from alembic.operations import Operations, MigrateOperation
+
+        @Operations.register_operation("create_sequence")
+        class CreateSequenceOp(MigrateOperation):
+            """Create a SEQUENCE."""
+
+            def __init__(self, sequence_name, **kw):
+                self.sequence_name = sequence_name
+                self.kw = kw
+
+            @classmethod
+            def create_sequence(cls, operations, sequence_name, **kw):
+                """Issue a "CREATE SEQUENCE" instruction."""
+
+                op = CreateSequenceOp(sequence_name, **kw)
+                return operations.invoke(op)
+
+        @Operations.implementation_for(CreateSequenceOp)
+        def create_sequence(operations, operation):
+            operations.execute("CREATE SEQUENCE %s" % operation.sequence_name)
+
+        context = op_fixture()
+        op.create_sequence('foob')
+        context.assert_("CREATE SEQUENCE foob")
+
+
+class EnsureOrigObjectFromToTest(TestBase):
+    """the to_XYZ and from_XYZ methods are used heavily in autogenerate.
+
+    It's critical that these methods, at least the "drop" form,
+    always return the *same* object if available so that all the info
+    passed into to_XYZ is maintained in the from_XYZ.
+
+
+    """
+
+    def test_drop_index(self):
+        schema_obj = schemaobj.SchemaObjects()
+        idx = schema_obj.index('x', 'y', ['z'])
+        op = ops.DropIndexOp.from_index(idx)
+        is_(
+            op.to_index(), idx
+        )
+
+    def test_create_index(self):
+        schema_obj = schemaobj.SchemaObjects()
+        idx = schema_obj.index('x', 'y', ['z'])
+        op = ops.CreateIndexOp.from_index(idx)
+        is_(
+            op.to_index(), idx
+        )
+
+    def test_drop_table(self):
+        schema_obj = schemaobj.SchemaObjects()
+        table = schema_obj.table('x', Column('q', Integer))
+        op = ops.DropTableOp.from_table(table)
+        is_(
+            op.to_table(), table
+        )
+
+    def test_create_table(self):
+        schema_obj = schemaobj.SchemaObjects()
+        table = schema_obj.table('x', Column('q', Integer))
+        op = ops.CreateTableOp.from_table(table)
+        is_(
+            op.to_table(), table
+        )
+
+    def test_drop_unique_constraint(self):
+        schema_obj = schemaobj.SchemaObjects()
+        const = schema_obj.unique_constraint('x', 'foobar', ['a'])
+        op = ops.DropConstraintOp.from_constraint(const)
+        is_(
+            op.to_constraint(), const
+        )
+
+    def test_drop_constraint_not_available(self):
+        op = ops.DropConstraintOp('x', 'y', type_='unique')
+        assert_raises_message(
+            ValueError,
+            "constraint cannot be produced",
+            op.to_constraint
+        )

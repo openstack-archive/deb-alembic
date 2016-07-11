@@ -1,16 +1,12 @@
-from sqlalchemy.sql.expression import _BindParamClause
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy import schema, text, sql
+from sqlalchemy import schema, text
 from sqlalchemy import types as sqltypes
 
-from ..compat import string_types, text_type, with_metaclass
+from ..util.compat import (
+    string_types, text_type, with_metaclass
+)
+from ..util import sqla_compat
 from .. import util
 from . import base
-
-if util.sqla_08:
-    from sqlalchemy.sql.expression import TextClause
-else:
-    from sqlalchemy.sql.expression import _TextClause as TextClause
 
 
 class ImplMeta(type):
@@ -48,11 +44,21 @@ class DefaultImpl(with_metaclass(ImplMeta)):
         self.dialect = dialect
         self.connection = connection
         self.as_sql = as_sql
+        self.literal_binds = context_opts.get('literal_binds', False)
+        if self.literal_binds and not util.sqla_08:
+            util.warn("'literal_binds' flag not supported in SQLAlchemy 0.7")
+            self.literal_binds = False
+
         self.output_buffer = output_buffer
         self.memo = {}
         self.context_opts = context_opts
         if transactional_ddl is not None:
             self.transactional_ddl = transactional_ddl
+
+        if self.literal_binds:
+            if not self.as_sql:
+                raise util.CommandError(
+                    "Can't use literal_binds setting without as_sql mode")
 
     @classmethod
     def get_by_dialect(cls, dialect):
@@ -95,8 +101,15 @@ class DefaultImpl(with_metaclass(ImplMeta)):
             if multiparams or params:
                 # TODO: coverage
                 raise Exception("Execution arguments not allowed with as_sql")
+
+            if self.literal_binds and not isinstance(
+                    construct, schema.DDLElement):
+                compile_kw = dict(compile_kwargs={"literal_binds": True})
+            else:
+                compile_kw = {}
+
             self.static_output(text_type(
-                construct.compile(dialect=self.dialect)
+                construct.compile(dialect=self.dialect, **compile_kw)
             ).replace("\t", "    ").strip() + self.command_terminator)
         else:
             conn = self.connection
@@ -204,8 +217,10 @@ class DefaultImpl(with_metaclass(ImplMeta)):
             for row in rows:
                 self._exec(table.insert(inline=True).values(**dict(
                     (k,
-                        _literal_bindparam(k, v, type_=table.c[k].type)
-                        if not isinstance(v, _literal_bindparam) else v)
+                        sqla_compat._literal_bindparam(
+                            k, v, type_=table.c[k].type)
+                        if not isinstance(
+                            v, sqla_compat._literal_bindparam) else v)
                     for k, v in row.items()
                 )))
         else:
@@ -229,6 +244,12 @@ class DefaultImpl(with_metaclass(ImplMeta)):
         # work around SQLAlchemy bug "stale value for type affinity"
         # fixed in 0.7.4
         metadata_impl.__dict__.pop('_type_affinity', None)
+
+        if hasattr(metadata_impl, "compare_against_backend"):
+            comparison = metadata_impl.compare_against_backend(
+                self.dialect, conn_type)
+            if comparison is not None:
+                return not comparison
 
         if conn_type._compare_type_affinity(
             metadata_impl
@@ -258,6 +279,9 @@ class DefaultImpl(with_metaclass(ImplMeta)):
                 return self.autogen_column_reflect(
                     inspector, table, column_info)
             return adapt
+
+    def correct_for_autogen_foreignkeys(self, conn_fks, metadata_fks):
+        pass
 
     def autogen_column_reflect(self, inspector, table, column_info):
         """A hook that is attached to the 'column_reflect' event for when
@@ -297,61 +321,6 @@ class DefaultImpl(with_metaclass(ImplMeta)):
         self.static_output("COMMIT" + self.command_terminator)
 
 
-class _literal_bindparam(_BindParamClause):
-    pass
-
-
-@compiles(_literal_bindparam)
-def _render_literal_bindparam(element, compiler, **kw):
-    return compiler.render_literal_bindparam(element, **kw)
-
-
-def _textual_index_column(table, text_):
-    """a workaround for the Index construct's severe lack of flexibility"""
-    if isinstance(text_, string_types):
-        c = schema.Column(text_, sqltypes.NULLTYPE)
-        table.append_column(c)
-        return c
-    elif isinstance(text_, TextClause):
-        return _textual_index_element(table, text_)
-    else:
-        raise ValueError("String or text() construct expected")
-
-
-class _textual_index_element(sql.ColumnElement):
-    """Wrap around a sqlalchemy text() construct in such a way that
-    we appear like a column-oriented SQL expression to an Index
-    construct.
-
-    The issue here is that currently the Postgresql dialect, the biggest
-    recipient of functional indexes, keys all the index expressions to
-    the corresponding column expressions when rendering CREATE INDEX,
-    so the Index we create here needs to have a .columns collection that
-    is the same length as the .expressions collection.  Ultimately
-    SQLAlchemy should support text() expressions in indexes.
-
-    See https://bitbucket.org/zzzeek/sqlalchemy/issue/3174/\
-    support-text-sent-to-indexes
-
-    """
-    __visit_name__ = '_textual_idx_element'
-
-    def __init__(self, table, text):
-        self.table = table
-        self.text = text
-        self.key = text.text
-        self.fake_column = schema.Column(self.text.text, sqltypes.NULLTYPE)
-        table.append_column(self.fake_column)
-
-    def get_children(self):
-        return [self.fake_column]
-
-
-@compiles(_textual_index_element)
-def _render_textual_index_column(element, compiler, **kw):
-    return compiler.process(element.text, **kw)
-
-
 def _string_compare(t1, t2):
     return \
         t1.length is not None and \
@@ -368,7 +337,21 @@ def _numeric_compare(t1, t2):
             t1.scale is not None and
             t1.scale != t2.scale
         )
+
+
+def _integer_compare(t1, t2):
+    t1_small_or_big = (
+        'S' if isinstance(t1, sqltypes.SmallInteger)
+        else 'B' if isinstance(t1, sqltypes.BigInteger) else 'I'
+    )
+    t2_small_or_big = (
+        'S' if isinstance(t2, sqltypes.SmallInteger)
+        else 'B' if isinstance(t2, sqltypes.BigInteger) else 'I'
+    )
+    return t1_small_or_big != t2_small_or_big
+
 _type_comparators = {
     sqltypes.String: _string_compare,
-    sqltypes.Numeric: _numeric_compare
+    sqltypes.Numeric: _numeric_compare,
+    sqltypes.Integer: _integer_compare
 }

@@ -3,11 +3,11 @@ import sys
 from contextlib import contextmanager
 
 from sqlalchemy import MetaData, Table, Column, String, literal_column
-from sqlalchemy import create_engine
+from sqlalchemy.engine.strategies import MockEngineStrategy
 from sqlalchemy.engine import url as sqla_url
 
-from .compat import callable, EncodedIO
-from . import ddl, util
+from ..util.compat import callable, EncodedIO
+from .. import ddl, util
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,6 @@ class MigrationContext(object):
         self.opts = opts
         self.dialect = dialect
         self.script = opts.get('script')
-
         as_sql = opts.get('as_sql', False)
         transactional_ddl = opts.get("transactional_ddl")
 
@@ -119,6 +118,7 @@ class MigrationContext(object):
                   connection=None,
                   url=None,
                   dialect_name=None,
+                  dialect=None,
                   environment_context=None,
                   opts=None,
                   ):
@@ -153,7 +153,7 @@ class MigrationContext(object):
         elif dialect_name:
             url = sqla_url.make_url("%s://" % dialect_name)
             dialect = url.get_dialect()()
-        else:
+        elif not dialect:
             raise Exception("Connection, url, or dialect_name is required.")
 
         return MigrationContext(dialect, connection, opts, environment_context)
@@ -229,7 +229,12 @@ class MigrationContext(object):
 
         """
         if self.as_sql:
-            return util.to_tuple(self._start_from_rev, default=())
+            start_from_rev = self._start_from_rev
+            if start_from_rev is not None and self.script:
+                start_from_rev = \
+                    self.script.get_revision(start_from_rev).revision
+
+            return util.to_tuple(start_from_rev, default=())
         else:
             if self._start_from_rev:
                 raise util.CommandError(
@@ -260,6 +265,8 @@ class MigrationContext(object):
 
         """
         heads = self.get_current_heads()
+        if not self.as_sql and not heads:
+            self._ensure_version_table()
         head_maintainer = HeadMaintainer(self, heads)
         for step in script_directory._stamp_revs(revision, heads):
             head_maintainer.update_to_step(step)
@@ -329,8 +336,7 @@ class MigrationContext(object):
         def dump(construct, *multiparams, **params):
             self.impl._exec(construct)
 
-        return create_engine("%s://" % self.dialect.name,
-                             strategy="mock", executor=dump)
+        return MockEngineStrategy.MockConnection(self.dialect, dump)
 
     @property
     def bind(self):
@@ -667,14 +673,15 @@ class RevisionStep(MigrationStep):
         if not downrevs:
             # is a base
             return True
-        elif len(downrevs) == 1:
-            if downrevs[0] in heads:
-                return False
-            else:
-                return True
         else:
-            # is a merge point
-            return False
+            # none of our downrevs are present, so...
+            # we have to insert our version.   This is true whether
+            # or not there is only one downrev, or multiple (in the latter
+            # case, we're a merge point.)
+            if not heads.intersection(downrevs):
+                return True
+            else:
+                return False
 
     def should_merge_branches(self, heads):
         if not self.is_upgrade:

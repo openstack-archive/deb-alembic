@@ -4,6 +4,615 @@ Changelog
 ==========
 
 .. changelog::
+    :version: 0.8.6
+    :released: April 14, 2016
+
+    .. change::
+      :tags: bug, commands
+      :tickets: 367
+
+      Errors which occur within the Mako render step are now intercepted
+      and raised as CommandErrors like other failure cases; the Mako
+      exception itself is written using template-line formatting to
+      a temporary file which is named in the exception message.
+
+    .. change::
+      :tags: bug, postgresql
+      :tickets: 365
+
+      Added a fix to Postgresql server default comparison which first checks
+      if the text of the default is identical to the original, before attempting
+      to actually run the default.  This accomodates for default-generation
+      functions that generate a new value each time such as a uuid function.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 361
+      :pullreq: bitbucket:55
+
+      Fixed bug introduced by the fix for :ticket:`338` in version 0.8.4
+      where a server default could no longer be dropped in batch mode.
+      Pull request courtesy Martin Domke.
+
+    .. change::
+      :tags: bug, batch, mssql
+      :pullreq: bitbucket:53
+
+      Fixed bug where SQL Server arguments for drop_column() would not
+      be propagated when running under a batch block.  Pull request
+      courtesy Michal Petrucha.
+
+.. changelog::
+    :version: 0.8.5
+    :released: March 9, 2016
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 335
+      :pullreq: bitbucket:49
+
+      Fixed bug where the columns rendered in a ``PrimaryKeyConstraint``
+      in autogenerate would inappropriately render the "key" of the
+      column, not the name.  Pull request courtesy Jesse Dhillon.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 354
+
+      Repaired batch migration support for "schema" types which generate
+      constraints, in particular the ``Boolean`` datatype which generates
+      a CHECK constraint.  Previously, an alter column operation with this
+      type would fail to correctly accommodate for the CHECK constraint
+      on change both from and to this type.  In the former case the operation
+      would fail entirely, in the latter, the CHECK constraint would
+      not get generated.  Both of these issues are repaired.
+
+    .. change::
+      :tags: bug, mysql
+      :tickets: 355
+
+      Changing a schema type such as ``Boolean`` to a non-schema type would
+      emit a drop constraint operation which emits ``NotImplementedError`` for
+      the MySQL dialect.  This drop constraint operation is now skipped when
+      the constraint originates from a schema type.
+
+.. changelog::
+    :version: 0.8.4
+    :released: December 15, 2015
+
+    .. change::
+      :tags: feature, versioning
+      :pullreq: bitbucket:51
+
+      A major improvement to the hash id generation function, which for some
+      reason used an awkward arithmetic formula against uuid4() that produced
+      values that tended to start with the digits 1-4.  Replaced with a
+      simple substring approach which provides an even distribution.  Pull
+      request courtesy Antti Haapala.
+
+    .. change::
+      :tags: feature, autogenerate
+      :pullreq: github:20
+
+      Added an autogenerate renderer for the :class:`.ExecuteSQLOp` operation
+      object; only renders if given a plain SQL string, otherwise raises
+      NotImplementedError.  Can be of help with custom autogenerate
+      sequences that includes straight SQL execution.  Pull request courtesy
+      Jacob Magnusson.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 345
+
+      Batch mode generates a FOREIGN KEY constraint that is self-referential
+      using the ultimate table name, rather than ``_alembic_batch_temp``.
+      When the table is renamed from ``_alembic_batch_temp`` back to the
+      original name, the FK now points to the right name.  This
+      will **not** work if referential integrity is being enforced (eg. SQLite
+      "PRAGMA FOREIGN_KEYS=ON") since the original table is dropped and
+      the new table then renamed to that name, however this is now consistent
+      with how foreign key constraints on **other** tables already operate
+      with batch mode; these don't support batch mode if referential integrity
+      is enabled in any case.
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 341
+
+      Added a type-level comparator that distinguishes :class:`.Integer`,
+      :class:`.BigInteger`, and :class:`.SmallInteger` types and
+      dialect-specific types; these all have "Integer" affinity so previously
+      all compared as the same.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 338
+
+      Fixed bug where the ``server_default`` parameter of ``alter_column()``
+      would not function correctly in batch mode.
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 337
+
+      Adjusted the rendering for index expressions such that a :class:`.Column`
+      object present in the source :class:`.Index` will not be rendered
+      as table-qualified; e.g. the column name will be rendered alone.
+      Table-qualified names here were failing on systems such as Postgresql.
+
+.. changelog::
+    :version: 0.8.3
+    :released: October 16, 2015
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 332
+
+      Fixed an 0.8 regression whereby the "imports" dictionary member of
+      the autogen context was removed; this collection is documented in the
+      "render custom type" documentation as a place to add new imports.
+      The member is now known as
+      :attr:`.AutogenContext.imports` and the documentation is repaired.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 333
+
+      Fixed bug in batch mode where a table that had pre-existing indexes
+      would create the same index on the new table with the same name,
+      which on SQLite produces a naming conflict as index names are in a
+      global namespace on that backend.   Batch mode now defers the production
+      of both existing and new indexes until after the entire table transfer
+      operation is complete, which also means those indexes no longer take
+      effect during the INSERT from SELECT section as well; the indexes
+      are applied in a single step afterwards.
+
+    .. change::
+      :tags: bug, tests
+      :pullreq: bitbucket:47
+
+      Added "pytest-xdist" as a tox dependency, so that the -n flag
+      in the test command works if this is not already installed.
+      Pull request courtesy Julien Danjou.
+
+    .. change::
+      :tags: bug, autogenerate, postgresql
+      :tickets: 324
+
+      Fixed issue in PG server default comparison where model-side defaults
+      configured with Python unicode literals would leak the "u" character
+      from a ``repr()`` into the SQL used for comparison, creating an invalid
+      SQL expression, as the server-side comparison feature in PG currently
+      repurposes the autogenerate Python rendering feature to get a quoted
+      version of a plain string default.
+
+
+.. changelog::
+    :version: 0.8.2
+    :released: August 25, 2015
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 321
+
+      Added workaround in new foreign key option detection feature for
+      MySQL's consideration of the "RESTRICT" option being the default,
+      for which no value is reported from the database; the MySQL impl now
+      corrects for when the model reports RESTRICT but the database reports
+      nothing.   A similar rule is in the default FK comparison to accommodate
+      for the default "NO ACTION" setting being present in the model but not
+      necessarily reported by the database, or vice versa.
+
+.. changelog::
+    :version: 0.8.1
+    :released: August 22, 2015
+
+    .. change::
+      :tags: feature, autogenerate
+
+      A custom :paramref:`.EnvironmentContext.configure.process_revision_directives`
+      hook can now generate op directives within the :class:`.UpgradeOps`
+      and :class:`.DowngradeOps` containers that will be generated as Python
+      code even when the ``--autogenerate`` flag is False; provided that
+      ``revision_environment=True``, the full render operation will be run
+      even in "offline" mode.
+
+    .. change::
+      :tags: bug, autogenerate
+
+      Repaired the render operation for the :class:`.ops.AlterColumnOp` object
+      to succeed when the "existing_type" field was not present.
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 318
+
+      Fixed a regression 0.8 whereby the "multidb" environment template
+      failed to produce independent migration script segments for the
+      output template.  This was due to the reorganization of the script
+      rendering system for 0.8.  To accommodate this change, the
+      :class:`.MigrationScript` structure will in the case of multiple
+      calls to :meth:`.MigrationContext.run_migrations` produce lists
+      for the :attr:`.MigrationScript.upgrade_ops` and
+      :attr:`.MigrationScript.downgrade_ops` attributes; each :class:`.UpgradeOps`
+      and :class:`.DowngradeOps` instance keeps track of its own
+      ``upgrade_token`` and ``downgrade_token``, and each are rendered
+      individually.
+
+      .. seealso::
+
+        :ref:`autogen_customizing_multiengine_revision` - additional detail
+        on the workings of the
+        :paramref:`.EnvironmentContext.configure.process_revision_directives`
+        parameter when multiple calls to :meth:`.MigrationContext.run_migrations`
+        are made.
+
+
+    .. change::
+      :tags: feature, autogenerate
+      :tickets: 317
+
+      Implemented support for autogenerate detection of changes in the
+      ``ondelete``, ``onupdate``, ``initially`` and ``deferrable``
+      attributes of :class:`.ForeignKeyConstraint` objects on
+      SQLAlchemy backends that support these on reflection
+      (as of SQLAlchemy 1.0.8 currently Postgresql for all four,
+      MySQL for ``ondelete`` and  ``onupdate`` only).   A constraint object
+      that modifies these values will be reported as a "diff" and come out
+      as a drop/create of the constraint with the modified values.
+      The fields are ignored for backends which don't reflect these
+      attributes (as of SQLA 1.0.8 this includes SQLite, Oracle, SQL Server,
+      others).
+
+.. changelog::
+    :version: 0.8.0
+    :released: August 12, 2015
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 315
+
+      Fixed bug in batch mode where the ``batch_op.create_foreign_key()``
+      directive would be incorrectly rendered with the source table and
+      schema names in the argument list.
+
+    .. change::
+      :tags: feature, commands
+      :pullreq: bitbucket:46
+
+      Added new command ``alembic edit``.  This command takes the same
+      arguments as ``alembic show``, however runs the target script
+      file within $EDITOR.  Makes use of the ``python-editor`` library
+      in order to facilitate the handling of $EDITOR with reasonable
+      default behaviors across platforms.  Pull request courtesy
+      Michel Albert.
+
+    .. change::
+      :tags: feature, commands
+      :tickets: 311
+
+      Added new multiple-capable argument ``--depends-on`` to the
+      ``alembic revision`` command, allowing ``depends_on`` to be
+      established at the command line level rather than having to edit
+      the file after the fact. ``depends_on`` identifiers may also be
+      specified as branch names at the command line or directly within
+      the migration file. The values may be specified as partial
+      revision numbers from the command line which will be resolved to
+      full revision numbers in the output file.
+
+    .. change::
+      :tags: change, operations
+
+      A range of positional argument names have been changed to be
+      clearer and more consistent across methods within the
+      :class:`.Operations` namespace.   The most prevalent form of name change
+      is that the descriptive names ``constraint_name`` and ``table_name``
+      are now used where previously the name ``name`` would be used.
+      This is in support of the newly modularized and extensible system of
+      operation objects in :mod:`alembic.operations.ops`.
+      An argument translation layer is in place
+      across the ``alembic.op`` namespace that will ensure that named
+      argument calling styles that use the old names will continue to
+      function by transparently translating to the new names,
+      also emitting a warning.   This, along with the fact that these
+      arguments are positional in any case and aren't normally
+      passed with an explicit name, should ensure that the
+      overwhelming majority of applications should be unaffected by this
+      change.   The *only* applications that are impacted are those that:
+
+      1. use the :class:`.Operations` object directly in some way, rather
+         than calling upon the ``alembic.op`` namespace, and
+
+      2. invoke the methods on :class:`.Operations` using named keyword
+         arguments for positional arguments like ``table_name``,
+         ``constraint_name``, etc., which commonly were named ``name``
+         as of 0.7.6.
+
+      3. any application that is using named keyword arguments in place
+         of positional argument for the recently added
+         :class:`.BatchOperations` object may also be affected.
+
+      The naming changes are documented as "versionchanged" for 0.8.0:
+
+      * :meth:`.BatchOperations.create_check_constraint`
+      * :meth:`.BatchOperations.create_foreign_key`
+      * :meth:`.BatchOperations.create_index`
+      * :meth:`.BatchOperations.create_unique_constraint`
+      * :meth:`.BatchOperations.drop_constraint`
+      * :meth:`.BatchOperations.drop_index`
+      * :meth:`.Operations.create_check_constraint`
+      * :meth:`.Operations.create_foreign_key`
+      * :meth:`.Operations.create_primary_key`
+      * :meth:`.Operations.create_index`
+      * :meth:`.Operations.create_table`
+      * :meth:`.Operations.create_unique_constraint`
+      * :meth:`.Operations.drop_constraint`
+      * :meth:`.Operations.drop_index`
+      * :meth:`.Operations.drop_table`
+
+
+    .. change::
+      :tags: feature, tests
+
+      The default test runner via "python setup.py test" is now py.test.
+      nose still works via run_tests.py.
+
+    .. change::
+      :tags: feature, operations
+      :tickets: 302
+
+      The internal system for Alembic operations has been reworked to now
+      build upon an extensible system of operation objects.  New operations
+      can be added to the ``op.`` namespace, including that they are
+      available in custom autogenerate schemes.
+
+      .. seealso::
+
+          :ref:`operation_plugins`
+
+    .. change::
+      :tags: feature, autogenerate
+      :tickets: 301, 306
+
+      The internal system for autogenerate been reworked to build upon
+      the extensible system of operation objects present in
+      :ticket:`302`.  As part of this change, autogenerate now produces
+      a full object graph representing a list of migration scripts to
+      be written as well as operation objects that will render all the
+      Python code within them; a new hook
+      :paramref:`.EnvironmentContext.configure.process_revision_directives`
+      allows end-user code to fully customize what autogenerate will do,
+      including not just full manipulation of the Python steps to take
+      but also what file or files will be written and where.  Additionally,
+      autogenerate is now extensible as far as database objects compared
+      and rendered into scripts; any new operation directive can also be
+      registered into a series of hooks that allow custom database/model
+      comparison functions to run as well as to render new operation
+      directives into autogenerate scripts.
+
+      .. seealso::
+
+        :ref:`alembic.autogenerate.toplevel`
+
+    .. change::
+      :tags: bug, versioning
+      :tickets: 314
+
+      Fixed bug where in the erroneous case that alembic_version contains
+      duplicate revisions, some commands would fail to process the
+      version history correctly and end up with a KeyError.   The fix
+      allows the versioning logic to proceed, however a clear error is
+      emitted later when attempting to update the alembic_version table.
+
+.. changelog::
+    :version: 0.7.7
+    :released: July 22, 2015
+
+    .. change::
+      :tags: bug, versioning
+      :tickets: 310
+
+      Fixed critical issue where a complex series of branches/merges would
+      bog down the iteration algorithm working over redundant nodes for
+      millions of cycles.   An internal adjustment has been
+      made so that duplicate nodes are skipped within this iteration.
+
+    .. change::
+      :tags: feature, batch
+      :tickets: 305
+
+      Implemented support for :meth:`.BatchOperations.create_primary_key`
+      and :meth:`.BatchOperations.create_check_constraint`. Additionally,
+      table keyword arguments are copied from the original reflected table,
+      such as the "mysql_engine" keyword argument.
+
+    .. change::
+      :tags: bug, environment
+      :tickets: 300
+
+      The :meth:`.MigrationContext.stamp` method, added as part of the
+      versioning refactor in 0.7 as a more granular version of
+      :func:`.command.stamp`, now includes the "create the alembic_version
+      table if not present" step in the same way as the command version,
+      which was previously omitted.
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 298
+
+      Fixed bug where foreign key options including "onupdate",
+      "ondelete" would not render within the ``op.create_foreign_key()``
+      directive, even though they render within a full
+      ``ForeignKeyConstraint`` directive.
+
+    .. change::
+      :tags: bug, tests
+
+      Repaired warnings that occur when running unit tests against
+      SQLAlchemy 1.0.5 or greater involving the "legacy_schema_aliasing"
+      flag.
+
+.. changelog::
+    :version: 0.7.6
+    :released: May 5, 2015
+
+    .. change::
+      :tags: feature, versioning
+      :tickets: 297
+
+      Fixed bug where the case of multiple mergepoints that all
+      have the identical set of ancestor revisions would fail to be
+      upgradable, producing an assertion failure.   Merge points were
+      previously assumed to always require at least an UPDATE in
+      alembic_revision from one of the previous revs to the new one,
+      however in this case, if one of the mergepoints has already
+      been reached, the remaining mergepoints have no row to UPDATE therefore
+      they must do an INSERT of their target version.
+
+    .. change::
+      :tags: feature, autogenerate
+      :tickets: 296
+
+      Added support for type comparison functions to be not just per
+      environment, but also present on the custom types themselves, by
+      supplying a method ``compare_against_backend``.
+      Added a new documentation section :ref:`compare_types` describing
+      type comparison fully.
+
+    .. change::
+      :tags: feature, operations
+      :tickets: 255
+
+      Added a new option
+      :paramref:`.EnvironmentContext.configure.literal_binds`, which
+      will pass the ``literal_binds`` flag into the compilation of SQL
+      constructs when using "offline" mode.  This has the effect that
+      SQL objects like inserts, updates, deletes as well as textual
+      statements sent using ``text()`` will be compiled such that the dialect
+      will attempt to render literal values "inline" automatically.
+      Only a subset of types is typically supported; the
+      :meth:`.Operations.inline_literal` construct remains as the construct
+      used to force a specific literal representation of a value.
+      The :paramref:`.EnvironmentContext.configure.literal_binds` flag
+      is added to the "offline" section of the ``env.py`` files generated
+      in new environments.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 289
+
+      Fully implemented the
+      :paramref:`~.Operations.batch_alter_table.copy_from` parameter for
+      batch mode, which previously was not functioning.  This allows
+      "batch mode" to be usable in conjunction with ``--sql``.
+
+    .. change::
+      :tags: bug, batch
+      :tickets: 287
+
+      Repaired support for the :meth:`.BatchOperations.create_index`
+      directive, which was mis-named internally such that the operation
+      within a batch context could not proceed.   The create index
+      operation will proceed as part of a larger "batch table recreate"
+      operation only if
+      :paramref:`~.Operations.batch_alter_table.recreate` is set to
+      "always", or if the batch operation includes other instructions that
+      require a table recreate.
+
+
+.. changelog::
+    :version: 0.7.5
+    :released: March 19, 2015
+
+    .. change::
+      :tags: bug, autogenerate
+      :tickets: 266
+      :pullreq: bitbucket:39
+
+      The ``--autogenerate`` option is not valid when used in conjunction
+      with "offline" mode, e.g. ``--sql``.  This now raises a ``CommandError``,
+      rather than failing more deeply later on.  Pull request courtesy
+      Johannes Erdfelt.
+
+    .. change::
+      :tags: bug, operations, mssql
+      :tickets: 284
+
+      Fixed bug where the mssql DROP COLUMN directive failed to include
+      modifiers such as "schema" when emitting the DDL.
+
+    .. change::
+      :tags: bug, autogenerate, postgresql
+      :tickets: 282
+
+      Postgresql "functional" indexes are necessarily skipped from the
+      autogenerate process, as the SQLAlchemy backend currently does not
+      support reflection of these structures.   A warning is emitted
+      both from the SQLAlchemy backend as well as from the Alembic
+      backend for Postgresql when such an index is detected.
+
+    .. change::
+      :tags: bug, autogenerate, mysql
+      :tickets: 276
+
+      Fixed bug where MySQL backend would report dropped unique indexes
+      and/or constraints as both at the same time.  This is because
+      MySQL doesn't actually have a "unique constraint" construct that
+      reports differently than a "unique index", so it is present in both
+      lists.  The net effect though is that the MySQL backend will report
+      a dropped unique index/constraint as an index in cases where the object
+      was first created as a unique constraint, if no other information
+      is available to make the decision.  This differs from other backends
+      like Postgresql which can report on unique constraints and
+      unique indexes separately.
+
+    .. change::
+      :tags: bug, commands
+      :tickets: 269
+
+      Fixed bug where using a partial revision identifier as the
+      "starting revision" in ``--sql`` mode in a downgrade operation
+      would fail to resolve properly.
+
+      As a side effect of this change, the
+      :meth:`.EnvironmentContext.get_starting_revision_argument`
+      method will return the "starting" revision in its originally-
+      given "partial" form in all cases, whereas previously when
+      running within the :meth:`.command.stamp` command, it would have
+      been resolved to a full number before passing it to the
+      :class:`.EnvironmentContext`.  The resolution of this value to
+      a real revision number has basically been moved to a more fundamental
+      level within the offline migration process.
+
+    .. change::
+      :tags: feature, commands
+
+      Added a new feature :attr:`.Config.attributes`, to help with the use
+      case of sharing state such as engines and connections on the outside
+      with a series of Alembic API calls; also added a new cookbook section
+      to describe this simple but pretty important use case.
+
+      .. seealso::
+
+          :ref:`connection_sharing`
+
+    .. change::
+      :tags: feature, environment
+
+      The format of the default ``env.py`` script has been refined a bit;
+      it now uses context managers not only for the scope of the transaction,
+      but also for connectivity from the starting engine.  The engine is also
+      now called a "connectable" in support of the use case of an external
+      connection being passed in.
+
+    .. change::
+      :tags: feature, versioning
+      :tickets: 267
+
+      Added support for "alembic stamp" to work when given "heads" as an
+      argument, when multiple heads are present.
+
+.. changelog::
     :version: 0.7.4
     :released: January 12, 2015
 

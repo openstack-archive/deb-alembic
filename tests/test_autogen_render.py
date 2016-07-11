@@ -1,7 +1,8 @@
 import re
 import sys
-from alembic.testing import TestBase
+from alembic.testing import TestBase, exclusions, assert_raises
 
+from alembic.operations import ops
 from sqlalchemy import MetaData, Column, Table, String, \
     Numeric, CHAR, ForeignKey, DATETIME, Integer, \
     CheckConstraint, Unicode, Enum, cast,\
@@ -12,11 +13,14 @@ from sqlalchemy.types import TIMESTAMP
 from sqlalchemy.types import UserDefinedType
 from sqlalchemy.dialects import mysql, postgresql
 from sqlalchemy.engine.default import DefaultDialect
-from sqlalchemy.sql import and_, column, literal_column, false
+from sqlalchemy.sql import and_, column, literal_column, false, table
+from alembic.migration import MigrationContext
+from alembic.autogenerate import api
 
 from alembic.testing.mock import patch
 
-from alembic import autogenerate, util, compat
+from alembic import autogenerate, util
+from alembic.util import compat
 from alembic.testing import eq_, eq_ignore_whitespace, config
 
 from alembic.testing.fixtures import op_fixture
@@ -30,22 +34,30 @@ class AutogenRenderTest(TestBase):
 
     """test individual directives"""
 
-    @classmethod
-    def setup_class(cls):
-        cls.autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-            },
-            'dialect': mysql.dialect()
+    def setUp(self):
+        ctx_opts = {
+            'sqlalchemy_module_prefix': 'sa.',
+            'alembic_module_prefix': 'op.',
+            'target_metadata': MetaData()
         }
-        cls.pg_autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-            },
-            'dialect': postgresql.dialect()
-        }
+        context = MigrationContext.configure(
+            dialect_name="mysql",
+            opts=ctx_opts
+        )
+
+        self.autogen_context = api.AutogenContext(context)
+
+        context = MigrationContext.configure(
+            dialect_name="postgresql",
+            opts=ctx_opts
+        )
+        self.pg_autogen_context = api.AutogenContext(context)
+
+        context = MigrationContext.configure(
+            dialect=DefaultDialect(),
+            opts=ctx_opts
+        )
+        self.default_autogen_context = api.AutogenContext(context)
 
     def test_render_add_index(self):
         """
@@ -58,11 +70,31 @@ class AutogenRenderTest(TestBase):
                   Column('code', String(255)),
                   )
         idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_active_code_idx', 'test', "
             "['active', 'code'], unique=False)"
         )
+
+    def test_render_add_index_batch(self):
+        """
+        autogenerate.render._add_index
+        """
+        m = MetaData()
+        t = Table('test', m,
+                  Column('id', Integer, primary_key=True),
+                  Column('active', Boolean()),
+                  Column('code', String(255)),
+                  )
+        idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.CreateIndexOp.from_index(idx)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.create_index('test_active_code_idx', "
+                "['active', 'code'], unique=False)"
+            )
 
     def test_render_add_index_schema(self):
         """
@@ -76,11 +108,32 @@ class AutogenRenderTest(TestBase):
                   schema='CamelSchema'
                   )
         idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_active_code_idx', 'test', "
             "['active', 'code'], unique=False, schema='CamelSchema')"
         )
+
+    def test_render_add_index_schema_batch(self):
+        """
+        autogenerate.render._add_index using schema
+        """
+        m = MetaData()
+        t = Table('test', m,
+                  Column('id', Integer, primary_key=True),
+                  Column('active', Boolean()),
+                  Column('code', String(255)),
+                  schema='CamelSchema'
+                  )
+        idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.CreateIndexOp.from_index(idx)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.create_index('test_active_code_idx', "
+                "['active', 'code'], unique=False)"
+            )
 
     def test_render_add_index_pg_where(self):
         autogen_context = self.pg_autogen_context
@@ -94,16 +147,18 @@ class AutogenRenderTest(TestBase):
         idx = Index('foo_idx', t.c.x, t.c.y,
                     postgresql_where=(t.c.y == 'something'))
 
+        op_obj = ops.CreateIndexOp.from_index(idx)
+
         if compat.sqla_08:
             eq_ignore_whitespace(
-                autogenerate.render._add_index(idx, autogen_context),
+                autogenerate.render_op_text(autogen_context, op_obj),
                 """op.create_index('foo_idx', 't', \
 ['x', 'y'], unique=False, """
-                """postgresql_where=sa.text(!U"t.y = 'something'"))"""
+                """postgresql_where=sa.text(!U"y = 'something'"))"""
             )
         else:
             eq_ignore_whitespace(
-                autogenerate.render._add_index(idx, autogen_context),
+                autogenerate.render_op_text(autogen_context, op_obj),
                 """op.create_index('foo_idx', 't', ['x', 'y'], \
 unique=False, """
                 """postgresql_where=sa.text(!U't.y = %(y_1)s'))"""
@@ -118,10 +173,12 @@ unique=False, """
             Column('code', String(255))
         )
         idx = Index('test_lower_code_idx', func.lower(t.c.code))
+        op_obj = ops.CreateIndexOp.from_index(idx)
+
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_lower_code_idx', 'test', "
-            "[sa.text(!U'lower(test.code)')], unique=False)"
+            "[sa.text(!U'lower(code)')], unique=False)"
         )
 
     @config.requirements.fail_before_sqla_080
@@ -133,8 +190,9 @@ unique=False, """
             Column('code', String(255))
         )
         idx = Index('test_lower_code_idx', cast(t.c.code, String))
+        op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_lower_code_idx', 'test', "
             "[sa.text(!U'CAST(test.code AS CHAR)')], unique=False)"
         )
@@ -148,10 +206,11 @@ unique=False, """
             Column('code', String(255))
         )
         idx = Index('test_desc_code_idx', t.c.code.desc())
+        op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index('test_desc_code_idx', 'test', "
-            "[sa.text(!U'test.code DESC')], unique=False)"
+            "[sa.text(!U'code DESC')], unique=False)"
         )
 
     def test_drop_index(self):
@@ -165,10 +224,29 @@ unique=False, """
                   Column('code', String(255)),
                   )
         idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._drop_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_index('test_active_code_idx', table_name='test')"
         )
+
+    def test_drop_index_batch(self):
+        """
+        autogenerate.render._drop_index
+        """
+        m = MetaData()
+        t = Table('test', m,
+                  Column('id', Integer, primary_key=True),
+                  Column('active', Boolean()),
+                  Column('code', String(255)),
+                  )
+        idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.DropIndexOp.from_index(idx)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.drop_index('test_active_code_idx')"
+            )
 
     def test_drop_index_schema(self):
         """
@@ -182,11 +260,31 @@ unique=False, """
                   schema='CamelSchema'
                   )
         idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._drop_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_index('test_active_code_idx', " +
             "table_name='test', schema='CamelSchema')"
         )
+
+    def test_drop_index_schema_batch(self):
+        """
+        autogenerate.render._drop_index using schema
+        """
+        m = MetaData()
+        t = Table('test', m,
+                  Column('id', Integer, primary_key=True),
+                  Column('active', Boolean()),
+                  Column('code', String(255)),
+                  schema='CamelSchema'
+                  )
+        idx = Index('test_active_code_idx', t.c.active, t.c.code)
+        op_obj = ops.DropIndexOp.from_index(idx)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.drop_index('test_active_code_idx')"
+            )
 
     def test_add_unique_constraint(self):
         """
@@ -199,11 +297,29 @@ unique=False, """
                   Column('code', String(255)),
                   )
         uq = UniqueConstraint(t.c.code, name='uq_test_code')
+        op_obj = ops.AddConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
-            autogenerate.render._add_unique_constraint(
-                uq, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_unique_constraint('uq_test_code', 'test', ['code'])"
         )
+
+    def test_add_unique_constraint_batch(self):
+        """
+        autogenerate.render._add_unique_constraint
+        """
+        m = MetaData()
+        t = Table('test', m,
+                  Column('id', Integer, primary_key=True),
+                  Column('active', Boolean()),
+                  Column('code', String(255)),
+                  )
+        uq = UniqueConstraint(t.c.code, name='uq_test_code')
+        op_obj = ops.AddConstraintOp.from_constraint(uq)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.create_unique_constraint('uq_test_code', ['code'])"
+            )
 
     def test_add_unique_constraint_schema(self):
         """
@@ -217,12 +333,32 @@ unique=False, """
                   schema='CamelSchema'
                   )
         uq = UniqueConstraint(t.c.code, name='uq_test_code')
+        op_obj = ops.AddConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
-            autogenerate.render._add_unique_constraint(
-                uq, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_unique_constraint('uq_test_code', 'test', "
             "['code'], schema='CamelSchema')"
         )
+
+    def test_add_unique_constraint_schema_batch(self):
+        """
+        autogenerate.render._add_unique_constraint using schema
+        """
+        m = MetaData()
+        t = Table('test', m,
+                  Column('id', Integer, primary_key=True),
+                  Column('active', Boolean()),
+                  Column('code', String(255)),
+                  schema='CamelSchema'
+                  )
+        uq = UniqueConstraint(t.c.code, name='uq_test_code')
+        op_obj = ops.AddConstraintOp.from_constraint(uq)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.create_unique_constraint('uq_test_code', "
+                "['code'])"
+            )
 
     def test_drop_unique_constraint(self):
         """
@@ -235,8 +371,9 @@ unique=False, """
                   Column('code', String(255)),
                   )
         uq = UniqueConstraint(t.c.code, name='uq_test_code')
+        op_obj = ops.DropConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
-            autogenerate.render._drop_constraint(uq, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_constraint('uq_test_code', 'test', type_='unique')"
         )
 
@@ -252,8 +389,9 @@ unique=False, """
                   schema='CamelSchema'
                   )
         uq = UniqueConstraint(t.c.code, name='uq_test_code')
+        op_obj = ops.DropConstraintOp.from_constraint(uq)
         eq_ignore_whitespace(
-            autogenerate.render._drop_constraint(uq, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_constraint('uq_test_code', 'test', "
             "schema='CamelSchema', type_='unique')"
         )
@@ -264,9 +402,100 @@ unique=False, """
         b = Table('b', m, Column('a_id', Integer, ForeignKey('a.id')))
         fk = ForeignKeyConstraint(['a_id'], ['a.id'], name='fk_a_id')
         b.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
         eq_ignore_whitespace(
-            autogenerate.render._add_fk_constraint(fk, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_foreign_key('fk_a_id', 'b', 'a', ['a_id'], ['id'])"
+        )
+
+    def test_add_fk_constraint_batch(self):
+        m = MetaData()
+        Table('a', m, Column('id', Integer, primary_key=True))
+        b = Table('b', m, Column('a_id', Integer, ForeignKey('a.id')))
+        fk = ForeignKeyConstraint(['a_id'], ['a.id'], name='fk_a_id')
+        b.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.create_foreign_key('fk_a_id', 'a', ['a_id'], ['id'])"
+            )
+
+    def test_add_fk_constraint_kwarg(self):
+        m = MetaData()
+        t1 = Table('t', m, Column('c', Integer))
+        t2 = Table('t2', m, Column('c_rem', Integer))
+
+        fk = ForeignKeyConstraint([t1.c.c], [t2.c.c_rem], onupdate="CASCADE")
+        if not util.sqla_08:
+            t1.append_constraint(fk)
+
+        # SQLA 0.9 generates a u'' here for remote cols while 0.8 does not,
+        # so just whack out "'u" here from the generated
+
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'", "'",
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+            ),
+            "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
+            "onupdate='CASCADE')"
+        )
+
+        fk = ForeignKeyConstraint([t1.c.c], [t2.c.c_rem], ondelete="CASCADE")
+        if not util.sqla_08:
+            t1.append_constraint(fk)
+
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'", "'",
+                autogenerate.render_op_text(self.autogen_context, op_obj)
+            ),
+            "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
+            "ondelete='CASCADE')"
+        )
+
+        fk = ForeignKeyConstraint([t1.c.c], [t2.c.c_rem], deferrable=True)
+        if not util.sqla_08:
+            t1.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'", "'",
+                autogenerate.render_op_text(self.autogen_context, op_obj)
+            ),
+            "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
+            "deferrable=True)"
+        )
+
+        fk = ForeignKeyConstraint([t1.c.c], [t2.c.c_rem], initially="XYZ")
+        if not util.sqla_08:
+            t1.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'", "'",
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+            ),
+            "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
+            "initially='XYZ')"
+        )
+
+        fk = ForeignKeyConstraint(
+            [t1.c.c], [t2.c.c_rem],
+            initially="XYZ", ondelete="CASCADE", deferrable=True)
+        if not util.sqla_08:
+            t1.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'", "'",
+                autogenerate.render_op_text(self.autogen_context, op_obj)
+            ),
+            "op.create_foreign_key(None, 't', 't2', ['c'], ['c_rem'], "
+            "ondelete='CASCADE', initially='XYZ', deferrable=True)"
         )
 
     def test_add_fk_constraint_inline_colkeys(self):
@@ -276,7 +505,8 @@ unique=False, """
             'b', m,
             Column('a_id', Integer, ForeignKey('a.aid'), key='baid'))
 
-        py_code = autogenerate.render._add_table(b, self.autogen_context)
+        op_obj = ops.CreateTableOp.from_table(b)
+        py_code = autogenerate.render_op_text(self.autogen_context, op_obj)
 
         eq_ignore_whitespace(
             py_code,
@@ -298,7 +528,8 @@ unique=False, """
         fk = ForeignKeyConstraint(['baid'], ['a.aid'], name='fk_a_id')
         b.append_constraint(fk)
 
-        py_code = autogenerate.render._add_table(b, self.autogen_context)
+        op_obj = ops.CreateTableOp.from_table(b)
+        py_code = autogenerate.render_op_text(self.autogen_context, op_obj)
 
         eq_ignore_whitespace(
             py_code,
@@ -314,13 +545,15 @@ unique=False, """
             "fk_a_id FOREIGN KEY(a_id) REFERENCES a (id))")
 
         context = op_fixture()
-        py_code = autogenerate.render._add_fk_constraint(
-            fk, self.autogen_context)
+
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
 
         eq_ignore_whitespace(
-            autogenerate.render._add_fk_constraint(fk, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_foreign_key('fk_a_id', 'b', 'a', ['a_id'], ['id'])"
         )
+
+        py_code = autogenerate.render_op_text(self.autogen_context, op_obj)
 
         eval(py_code)
         context.assert_(
@@ -339,12 +572,33 @@ unique=False, """
             ["a_id"],
             ["CamelSchemaTwo.a.id"], name='fk_a_id')
         b.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
         eq_ignore_whitespace(
-            autogenerate.render._add_fk_constraint(fk, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_foreign_key('fk_a_id', 'b', 'a', ['a_id'], ['id'],"
             " source_schema='CamelSchemaOne', "
             "referent_schema='CamelSchemaTwo')"
         )
+
+    def test_add_fk_constraint_schema_batch(self):
+        m = MetaData()
+        Table(
+            'a', m, Column('id', Integer, primary_key=True),
+            schema="CamelSchemaTwo")
+        b = Table(
+            'b', m, Column('a_id', Integer, ForeignKey('a.id')),
+            schema="CamelSchemaOne")
+        fk = ForeignKeyConstraint(
+            ["a_id"],
+            ["CamelSchemaTwo.a.id"], name='fk_a_id')
+        b.append_constraint(fk)
+        op_obj = ops.AddConstraintOp.from_constraint(fk)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.create_foreign_key('fk_a_id', 'a', ['a_id'], ['id'],"
+                " referent_schema='CamelSchemaTwo')"
+            )
 
     def test_drop_fk_constraint(self):
         m = MetaData()
@@ -352,10 +606,24 @@ unique=False, """
         b = Table('b', m, Column('a_id', Integer, ForeignKey('a.id')))
         fk = ForeignKeyConstraint(['a_id'], ['a.id'], name='fk_a_id')
         b.append_constraint(fk)
+        op_obj = ops.DropConstraintOp.from_constraint(fk)
         eq_ignore_whitespace(
-            autogenerate.render._drop_constraint(fk, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_constraint('fk_a_id', 'b', type_='foreignkey')"
         )
+
+    def test_drop_fk_constraint_batch(self):
+        m = MetaData()
+        Table('a', m, Column('id', Integer, primary_key=True))
+        b = Table('b', m, Column('a_id', Integer, ForeignKey('a.id')))
+        fk = ForeignKeyConstraint(['a_id'], ['a.id'], name='fk_a_id')
+        b.append_constraint(fk)
+        op_obj = ops.DropConstraintOp.from_constraint(fk)
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.drop_constraint('fk_a_id', type_='foreignkey')"
+            )
 
     def test_drop_fk_constraint_schema(self):
         m = MetaData()
@@ -369,12 +637,33 @@ unique=False, """
             ["a_id"],
             ["CamelSchemaTwo.a.id"], name='fk_a_id')
         b.append_constraint(fk)
+        op_obj = ops.DropConstraintOp.from_constraint(fk)
 
         eq_ignore_whitespace(
-            autogenerate.render._drop_constraint(fk, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_constraint('fk_a_id', 'b', schema='CamelSchemaOne', "
             "type_='foreignkey')"
         )
+
+    def test_drop_fk_constraint_batch_schema(self):
+        m = MetaData()
+        Table(
+            'a', m, Column('id', Integer, primary_key=True),
+            schema="CamelSchemaTwo")
+        b = Table(
+            'b', m, Column('a_id', Integer, ForeignKey('a.id')),
+            schema="CamelSchemaOne")
+        fk = ForeignKeyConstraint(
+            ["a_id"],
+            ["CamelSchemaTwo.a.id"], name='fk_a_id')
+        b.append_constraint(fk)
+        op_obj = ops.DropConstraintOp.from_constraint(fk)
+
+        with self.autogen_context._within_batch():
+            eq_ignore_whitespace(
+                autogenerate.render_op_text(self.autogen_context, op_obj),
+                "batch_op.drop_constraint('fk_a_id', type_='foreignkey')"
+            )
 
     def test_render_table_upgrade(self):
         m = MetaData()
@@ -387,8 +676,10 @@ unique=False, """
                   UniqueConstraint("name", name="uq_name"),
                   UniqueConstraint("timestamp"),
                   )
+
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.Column('name', sa.Unicode(length=255), nullable=True),"
@@ -412,8 +703,9 @@ unique=False, """
                   Column('q', Integer, ForeignKey('address.id')),
                   schema='foo'
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.Column('q', sa.Integer(), nullable=True),"
@@ -428,8 +720,9 @@ unique=False, """
         t = Table(compat.ue('\u0411\u0435\u0437'), m,
                   Column('id', Integer, primary_key=True),
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table(%r,"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.PrimaryKeyConstraint('id'))" % compat.ue('\u0411\u0435\u0437')
@@ -441,8 +734,9 @@ unique=False, """
                   Column('id', Integer, primary_key=True),
                   schema=compat.ue('\u0411\u0435\u0437')
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.PrimaryKeyConstraint('id'),"
@@ -459,8 +753,9 @@ unique=False, """
             Column('c', Integer),
             Column('d', Integer),
         )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "*[sa.Column('a', sa.Integer(), nullable=True),"
             "sa.Column('b', sa.Integer(), nullable=True),"
@@ -474,9 +769,10 @@ unique=False, """
             Column('b', Integer),
             Column('c', Integer),
         )
+        op_obj = ops.CreateTableOp.from_table(t2)
 
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t2, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test2',"
             "sa.Column('a', sa.Integer(), nullable=True),"
             "sa.Column('b', sa.Integer(), nullable=True),"
@@ -489,8 +785,9 @@ unique=False, """
                   Column('id', Integer, primary_key=True),
                   Column('q', Integer, ForeignKey('foo.address.id')),
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.Column('q', sa.Integer(), nullable=True),"
@@ -505,10 +802,11 @@ unique=False, """
                   Column('id', Integer, primary_key=True),
                   Column('q', Integer, ForeignKey('address.id')),
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
             re.sub(
                 r"u'", "'",
-                autogenerate.render._add_table(t, self.autogen_context)
+                autogenerate.render_op_text(self.autogen_context, op_obj)
             ),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
@@ -525,8 +823,9 @@ unique=False, """
                   Column('id', Integer, primary_key=True),
                   Column('q', Integer, ForeignKey('bar.address.id')),
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.Column('q', sa.Integer(), nullable=True),"
@@ -543,8 +842,9 @@ unique=False, """
                   Column('q', Integer, ForeignKey('bar.address.id')),
                   sqlite_autoincrement=True, mysql_engine="InnoDB"
                   )
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('id', sa.Integer(), nullable=False),"
             "sa.Column('q', sa.Integer(), nullable=True),"
@@ -554,17 +854,20 @@ unique=False, """
         )
 
     def test_render_drop_table(self):
+        op_obj = ops.DropTableOp.from_table(
+            Table("sometable", MetaData())
+        )
         eq_ignore_whitespace(
-            autogenerate.render._drop_table(Table("sometable", MetaData()),
-                                            self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_table('sometable')"
         )
 
     def test_render_drop_table_w_schema(self):
+        op_obj = ops.DropTableOp.from_table(
+            Table("sometable", MetaData(), schema='foo')
+        )
         eq_ignore_whitespace(
-            autogenerate.render._drop_table(
-                Table("sometable", MetaData(), schema='foo'),
-                self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_table('sometable', schema='foo')"
         )
 
@@ -572,10 +875,23 @@ unique=False, """
         m = MetaData()
         t = Table('test', m, Column('x', Boolean()))
 
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('test',"
             "sa.Column('x', sa.Boolean(), nullable=True))"
+        )
+
+    def test_render_pk_with_col_name_vs_col_key(self):
+        m = MetaData()
+        t1 = Table('t1', m, Column('x', Integer, key='y', primary_key=True))
+
+        op_obj = ops.CreateTableOp.from_table(t1)
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.create_table('t1',"
+            "sa.Column('x', sa.Integer(), nullable=False),"
+            "sa.PrimaryKeyConstraint('x'))"
         )
 
     def test_render_empty_pk_vs_nonempty_pk(self):
@@ -583,52 +899,53 @@ unique=False, """
         t1 = Table('t1', m, Column('x', Integer))
         t2 = Table('t2', m, Column('x', Integer, primary_key=True))
 
+        op_obj = ops.CreateTableOp.from_table(t1)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t1, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('t1',"
             "sa.Column('x', sa.Integer(), nullable=True))"
         )
 
+        op_obj = ops.CreateTableOp.from_table(t2)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t2, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('t2',"
             "sa.Column('x', sa.Integer(), nullable=False),"
             "sa.PrimaryKeyConstraint('x'))"
         )
 
     def test_render_add_column(self):
+        op_obj = ops.AddColumnOp(
+            "foo", Column("x", Integer, server_default="5"))
         eq_ignore_whitespace(
-            autogenerate.render._add_column(
-                None, "foo", Column("x", Integer, server_default="5"),
-                self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.add_column('foo', sa.Column('x', sa.Integer(), "
             "server_default='5', nullable=True))"
         )
 
     def test_render_add_column_w_schema(self):
+        op_obj = ops.AddColumnOp(
+            "bar", Column("x", Integer, server_default="5"),
+            schema="foo")
         eq_ignore_whitespace(
-            autogenerate.render._add_column(
-                "foo", "bar", Column("x", Integer, server_default="5"),
-                self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.add_column('bar', sa.Column('x', sa.Integer(), "
             "server_default='5', nullable=True), schema='foo')"
         )
 
     def test_render_drop_column(self):
+        op_obj = ops.DropColumnOp.from_column_and_tablename(
+            None, "foo", Column("x", Integer, server_default="5"))
         eq_ignore_whitespace(
-            autogenerate.render._drop_column(
-                None, "foo", Column("x", Integer, server_default="5"),
-                self.autogen_context),
-
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_column('foo', 'x')"
         )
 
     def test_render_drop_column_w_schema(self):
+        op_obj = ops.DropColumnOp.from_column_and_tablename(
+            "foo", "bar", Column("x", Integer, server_default="5"))
         eq_ignore_whitespace(
-            autogenerate.render._drop_column(
-                "foo", "bar", Column("x", Integer, server_default="5"),
-                self.autogen_context),
-
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_column('bar', 'x', schema='foo')"
         )
 
@@ -687,77 +1004,106 @@ unique=False, """
 
     def test_render_custom(self):
 
+        class MySpecialType(Integer):
+            pass
+
         def render(type_, obj, context):
             if type_ == "foreign_key":
                 return None
             if type_ == "column":
                 if obj.name == "y":
                     return None
+                elif obj.name == "q":
+                    return False
                 else:
                     return "col(%s)" % obj.name
+            if type_ == "type" and isinstance(obj, MySpecialType):
+                context.imports.add("from mypackage import MySpecialType")
+                return "MySpecialType()"
+
             return "render:%s" % type_
 
-        autogen_context = {"opts": {
-            'render_item': render,
-            'alembic_module_prefix': 'sa.'
-        }}
+        self.autogen_context.opts.update(
+            render_item=render,
+            alembic_module_prefix='sa.'
+        )
 
         t = Table('t', MetaData(),
                   Column('x', Integer),
                   Column('y', Integer),
+                  Column('q', MySpecialType()),
                   PrimaryKeyConstraint('x'),
                   ForeignKeyConstraint(['x'], ['y'])
                   )
-        result = autogenerate.render._add_table(
-            t, autogen_context
-        )
+        op_obj = ops.CreateTableOp.from_table(t)
+        result = autogenerate.render_op_text(self.autogen_context, op_obj)
         eq_ignore_whitespace(
             result,
             "sa.create_table('t',"
             "col(x),"
+            "sa.Column('q', MySpecialType(), nullable=True),"
             "render:primary_key)"
+        )
+        eq_(
+            self.autogen_context.imports,
+            set(['from mypackage import MySpecialType'])
         )
 
     def test_render_modify_type(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            modify_type=CHAR(10), existing_type=CHAR(20)
+        )
         eq_ignore_whitespace(
-            autogenerate.render._modify_col(
-                "sometable", "somecolumn",
-                self.autogen_context,
-                type_=CHAR(10), existing_type=CHAR(20)),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.CHAR(length=20), type_=sa.CHAR(length=10))"
         )
 
     def test_render_modify_type_w_schema(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            modify_type=CHAR(10), existing_type=CHAR(20),
+            schema='foo'
+        )
         eq_ignore_whitespace(
-            autogenerate.render._modify_col(
-                "sometable", "somecolumn",
-                self.autogen_context,
-                type_=CHAR(10), existing_type=CHAR(20),
-                schema='foo'),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.CHAR(length=20), type_=sa.CHAR(length=10), "
             "schema='foo')"
         )
 
     def test_render_modify_nullable(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            existing_type=Integer(),
+            modify_nullable=True
+        )
         eq_ignore_whitespace(
-            autogenerate.render._modify_col(
-                "sometable", "somecolumn",
-                self.autogen_context,
-                existing_type=Integer(),
-                nullable=True),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.Integer(), nullable=True)"
         )
 
-    def test_render_modify_nullable_w_schema(self):
+    def test_render_modify_nullable_no_existing_type(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            modify_nullable=True
+        )
         eq_ignore_whitespace(
-            autogenerate.render._modify_col(
-                "sometable", "somecolumn",
-                self.autogen_context,
-                existing_type=Integer(),
-                nullable=True, schema='foo'),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.alter_column('sometable', 'somecolumn', nullable=True)"
+        )
+
+    def test_render_modify_nullable_w_schema(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            existing_type=Integer(),
+            modify_nullable=True, schema='foo'
+        )
+
+        eq_ignore_whitespace(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.Integer(), nullable=True, schema='foo')"
         )
@@ -816,6 +1162,21 @@ unique=False, """
                     fk, self.autogen_context)
             ),
             "sa.ForeignKeyConstraint(['c'], ['t2.c_rem'], initially='XYZ')"
+        )
+
+        fk = ForeignKeyConstraint(
+            [t1.c.c], [t2.c.c_rem],
+            initially="XYZ", ondelete="CASCADE", deferrable=True)
+        if not util.sqla_08:
+            t1.append_constraint(fk)
+        eq_ignore_whitespace(
+            re.sub(
+                r"u'", "'",
+                autogenerate.render._render_constraint(
+                    fk, self.autogen_context)
+            ),
+            "sa.ForeignKeyConstraint(['c'], ['t2.c_rem'], "
+            "ondelete='CASCADE', initially='XYZ', deferrable=True)"
         )
 
     def test_render_fk_constraint_use_alter(self):
@@ -903,28 +1264,28 @@ unique=False, """
             't', m, Column('c', Integer),
             schema=compat.ue('\u0411\u0435\u0437')
         )
+        op_obj = ops.AddConstraintOp.from_constraint(UniqueConstraint(t.c.c))
         eq_ignore_whitespace(
-            autogenerate.render._add_unique_constraint(
-                UniqueConstraint(t.c.c),
-                self.autogen_context
-            ),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_unique_constraint(None, 't', ['c'], "
             "schema=%r)" % compat.ue('\u0411\u0435\u0437')
         )
 
     def test_render_modify_nullable_w_default(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            existing_type=Integer(),
+            existing_server_default="5",
+            modify_nullable=True
+        )
         eq_ignore_whitespace(
-            autogenerate.render._modify_col(
-                "sometable", "somecolumn",
-                self.autogen_context,
-                existing_type=Integer(),
-                existing_server_default="5",
-                nullable=True),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.Integer(), nullable=True, "
             "existing_server_default='5')"
         )
 
+    @config.requirements.fail_before_sqla_079
     def test_render_enum(self):
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
@@ -939,7 +1300,10 @@ unique=False, """
             "sa.Enum('one', 'two', 'three')"
         )
 
-    @config.requirements.fail_before_sqla_099
+    @exclusions.fails_if(
+        lambda config: (util.sqla_09 and not util.sqla_099) or not util.sqla_079,
+        "Fails on SQLAlchemy <0.7.9, 0.9.0-0.9.8"
+    )
     def test_render_non_native_enum(self):
         eq_ignore_whitespace(
             autogenerate.render._repr_type(
@@ -950,28 +1314,13 @@ unique=False, """
 
     def test_repr_plain_sqla_type(self):
         type_ = Integer()
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-            },
-            'dialect': mysql.dialect()
-        }
-
         eq_ignore_whitespace(
-            autogenerate.render._repr_type(type_, autogen_context),
+            autogenerate.render._repr_type(type_, self.autogen_context),
             "sa.Integer()"
         )
 
     def test_repr_custom_type_w_sqla_prefix(self):
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-                'user_module_prefix': None
-            },
-            'dialect': mysql.dialect()
-        }
+        self.autogen_context.opts['user_module_prefix'] = None
 
         class MyType(UserDefinedType):
             pass
@@ -981,7 +1330,7 @@ unique=False, """
         type_ = MyType()
 
         eq_ignore_whitespace(
-            autogenerate.render._repr_type(type_, autogen_context),
+            autogenerate.render._repr_type(type_, self.autogen_context),
             "sqlalchemy_util.types.MyType()"
         )
 
@@ -992,17 +1341,10 @@ unique=False, """
                 return "MYTYPE"
 
         type_ = MyType()
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-                'user_module_prefix': None
-            },
-            'dialect': mysql.dialect()
-        }
+        self.autogen_context.opts['user_module_prefix'] = None
 
         eq_ignore_whitespace(
-            autogenerate.render._repr_type(type_, autogen_context),
+            autogenerate.render._repr_type(type_, self.autogen_context),
             "tests.test_autogen_render.MyType()"
         )
 
@@ -1015,17 +1357,11 @@ unique=False, """
                 return "MYTYPE"
 
         type_ = MyType()
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-                'user_module_prefix': 'user.',
-            },
-            'dialect': mysql.dialect()
-        }
+
+        self.autogen_context.opts['user_module_prefix'] = 'user.'
 
         eq_ignore_whitespace(
-            autogenerate.render._repr_type(type_, autogen_context),
+            autogenerate.render._repr_type(type_, self.autogen_context),
             "user.MyType()"
         )
 
@@ -1034,20 +1370,14 @@ unique=False, """
         from sqlalchemy.dialects.mysql import VARCHAR
 
         type_ = VARCHAR(20, charset='utf8', national=True)
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-                'user_module_prefix': None,
-            },
-            'imports': set(),
-            'dialect': mysql.dialect()
-        }
+
+        self.autogen_context.opts['user_module_prefix'] = None
+
         eq_ignore_whitespace(
-            autogenerate.render._repr_type(type_, autogen_context),
+            autogenerate.render._repr_type(type_, self.autogen_context),
             "mysql.VARCHAR(charset='utf8', national=True, length=20)"
         )
-        eq_(autogen_context['imports'],
+        eq_(self.autogen_context.imports,
             set(['from sqlalchemy.dialects import mysql'])
             )
 
@@ -1067,19 +1397,12 @@ unique=False, """
         )
 
     def test_render_server_default_native_boolean(self):
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-            },
-            'dialect': postgresql.dialect()
-        }
         c = Column(
             'updated_at', Boolean(),
             server_default=false(),
             nullable=False)
         result = autogenerate.render._render_column(
-            c, autogen_context,
+            c, self.pg_autogen_context,
         )
         eq_ignore_whitespace(
             result,
@@ -1094,17 +1417,9 @@ unique=False, """
             'updated_at', Boolean(),
             server_default=false(),
             nullable=False)
-        dialect = DefaultDialect()
-        autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-            },
-            'dialect': dialect
-        }
 
         result = autogenerate.render._render_column(
-            c, autogen_context
+            c, self.default_autogen_context
         )
         eq_ignore_whitespace(
             result,
@@ -1142,31 +1457,37 @@ unique=False, """
         )
 
     def test_render_modify_reflected_int_server_default(self):
+        op_obj = ops.AlterColumnOp(
+            "sometable", "somecolumn",
+            existing_type=Integer(),
+            existing_server_default=DefaultClause(text("5")),
+            modify_nullable=True
+        )
         eq_ignore_whitespace(
-            autogenerate.render._modify_col(
-                "sometable", "somecolumn",
-                self.autogen_context,
-                existing_type=Integer(),
-                existing_server_default=DefaultClause(text("5")),
-                nullable=True),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.alter_column('sometable', 'somecolumn', "
             "existing_type=sa.Integer(), nullable=True, "
             "existing_server_default=sa.text(!U'5'))"
         )
 
+    def test_render_executesql_plaintext(self):
+        op_obj = ops.ExecuteSQLOp("drop table foo")
+        eq_(
+            autogenerate.render_op_text(self.autogen_context, op_obj),
+            "op.execute('drop table foo')"
+        )
+
+    def test_render_executesql_sqlexpr_notimplemented(self):
+        sql = table('x', column('q')).insert()
+        op_obj = ops.ExecuteSQLOp(sql)
+        assert_raises(
+            NotImplementedError,
+            autogenerate.render_op_text, self.autogen_context, op_obj
+        )
+
 
 class RenderNamingConventionTest(TestBase):
     __requires__ = ('sqlalchemy_094',)
-
-    @classmethod
-    def setup_class(cls):
-        cls.autogen_context = {
-            'opts': {
-                'sqlalchemy_module_prefix': 'sa.',
-                'alembic_module_prefix': 'op.',
-            },
-            'dialect': postgresql.dialect()
-        }
 
     def setUp(self):
 
@@ -1184,12 +1505,22 @@ class RenderNamingConventionTest(TestBase):
             naming_convention=convention
         )
 
+        ctx_opts = {
+            'sqlalchemy_module_prefix': 'sa.',
+            'alembic_module_prefix': 'op.',
+            'target_metadata': MetaData()
+        }
+        context = MigrationContext.configure(
+            dialect_name="postgresql",
+            opts=ctx_opts
+        )
+        self.autogen_context = api.AutogenContext(context)
+
     def test_schema_type_boolean(self):
         t = Table('t', self.metadata, Column('c', Boolean(name='xyz')))
+        op_obj = ops.AddColumnOp.from_column(t.c.c)
         eq_ignore_whitespace(
-            autogenerate.render._add_column(
-                None, "t", t.c.c,
-                self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.add_column('t', "
             "sa.Column('c', sa.Boolean(name='xyz'), nullable=True))"
         )
@@ -1222,8 +1553,9 @@ class RenderNamingConventionTest(TestBase):
                   Column('code', String(255)),
                   )
         idx = Index(None, t.c.active, t.c.code)
+        op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index(op.f('ix_ct_test_active'), 'test', "
             "['active', 'code'], unique=False)"
         )
@@ -1235,8 +1567,9 @@ class RenderNamingConventionTest(TestBase):
                   Column('code', String(255)),
                   )
         idx = Index(None, t.c.active, t.c.code)
+        op_obj = ops.DropIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._drop_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.drop_index(op.f('ix_ct_test_active'), table_name='test')"
         )
 
@@ -1248,8 +1581,9 @@ class RenderNamingConventionTest(TestBase):
                   schema='CamelSchema'
                   )
         idx = Index(None, t.c.active, t.c.code)
+        op_obj = ops.CreateIndexOp.from_index(idx)
         eq_ignore_whitespace(
-            autogenerate.render._add_index(idx, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_index(op.f('ix_ct_CamelSchema_test_active'), 'test', "
             "['active', 'code'], unique=False, schema='CamelSchema')"
         )
@@ -1266,8 +1600,9 @@ class RenderNamingConventionTest(TestBase):
 
     def test_inline_pk_constraint(self):
         t = Table('t', self.metadata, Column('c', Integer, primary_key=True))
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('t',sa.Column('c', sa.Integer(), nullable=False),"
             "sa.PrimaryKeyConstraint('c', name=op.f('pk_ct_t')))"
         )
@@ -1275,16 +1610,18 @@ class RenderNamingConventionTest(TestBase):
     def test_inline_ck_constraint(self):
         t = Table(
             't', self.metadata, Column('c', Integer), CheckConstraint("c > 5"))
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('t',sa.Column('c', sa.Integer(), nullable=True),"
             "sa.CheckConstraint(!U'c > 5', name=op.f('ck_ct_t')))"
         )
 
     def test_inline_fk(self):
         t = Table('t', self.metadata, Column('c', Integer, ForeignKey('q.id')))
+        op_obj = ops.CreateTableOp.from_table(t)
         eq_ignore_whitespace(
-            autogenerate.render._add_table(t, self.autogen_context),
+            autogenerate.render_op_text(self.autogen_context, op_obj),
             "op.create_table('t',sa.Column('c', sa.Integer(), nullable=True),"
             "sa.ForeignKeyConstraint(['c'], ['q.id'], "
             "name=op.f('fk_ct_t_c_q')))"
@@ -1314,3 +1651,29 @@ class RenderNamingConventionTest(TestBase):
             "sa.CheckConstraint(!U'im a constraint', name=op.f('ck_t_cc1'))"
         )
 
+    def test_create_table_plus_add_index_in_modify(self):
+        uo = ops.UpgradeOps(ops=[
+            ops.CreateTableOp(
+                "sometable",
+                [Column('x', Integer), Column('y', Integer)]
+            ),
+            ops.ModifyTableOps(
+                "sometable", ops=[
+                    ops.CreateIndexOp('ix1', 'sometable', ['x', 'y'])
+                ]
+            )
+        ])
+
+        eq_(
+            autogenerate.render_python_code(uo, render_as_batch=True),
+            "### commands auto generated by Alembic - please adjust! ###\n"
+            "    op.create_table('sometable',\n"
+            "    sa.Column('x', sa.Integer(), nullable=True),\n"
+            "    sa.Column('y', sa.Integer(), nullable=True)\n"
+            "    )\n"
+            "    with op.batch_alter_table('sometable', schema=None) "
+            "as batch_op:\n"
+            "        batch_op.create_index("
+            "'ix1', ['x', 'y'], unique=False)\n\n"
+            "    ### end Alembic commands ###"
+        )

@@ -1,5 +1,5 @@
 # testing/exclusions.py
-# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors
+# Copyright (C) 2005-2016 the SQLAlchemy authors and contributors
 # <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
@@ -14,10 +14,11 @@ from .plugin.plugin_base import SkipTest
 from sqlalchemy.util import decorator
 from . import config
 from sqlalchemy import util
-from alembic import compat
+from ..util import compat
 import inspect
 import contextlib
 from .compat import get_url_driver_name, get_url_backend_name
+
 
 def skip_if(predicate, reason=None):
     rule = compound()
@@ -403,8 +404,8 @@ def closed():
     return skip_if(BooleanPredicate(True, "marked as skip"))
 
 
-def fails():
-    return fails_if(BooleanPredicate(True, "expected to fail"))
+def fails(msg=None):
+    return fails_if(BooleanPredicate(True, msg or "expected to fail"))
 
 
 @decorator
@@ -419,7 +420,7 @@ def fails_on(db, reason=None):
 def fails_on_everything_except(*dbs):
     return succeeds_if(
         OrPredicate([
-            SpecPredicate(db) for db in dbs
+            Predicate.as_predicate(db) for db in dbs
         ])
     )
 

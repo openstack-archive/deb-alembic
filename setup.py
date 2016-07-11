@@ -1,6 +1,8 @@
 from setuptools import setup, find_packages
+from setuptools.command.test import test as TestCommand
 import os
 import re
+import sys
 
 
 v = open(os.path.join(os.path.dirname(__file__), 'alembic', '__init__.py'))
@@ -13,21 +15,33 @@ readme = os.path.join(os.path.dirname(__file__), 'README.rst')
 requires = [
     'SQLAlchemy>=0.7.6',
     'Mako',
+    'python-editor>=0.3',
 ]
-
-# Hack to prevent "TypeError: 'NoneType' object is not callable" error
-# in multiprocessing/util.py _exit_function when running `python
-# setup.py test` (see
-# http://www.eby-sarna.com/pipermail/peak/2010-May/003357.html)
-try:
-    import multiprocessing
-except ImportError:
-    pass
 
 try:
     import argparse
 except ImportError:
     requires.append('argparse')
+
+
+class PyTest(TestCommand):
+    user_options = [('pytest-args=', 'a', "Arguments to pass to py.test")]
+
+    def initialize_options(self):
+        TestCommand.initialize_options(self)
+        self.pytest_args = []
+
+    def finalize_options(self):
+        TestCommand.finalize_options(self)
+        self.test_args = []
+        self.test_suite = True
+
+    def run_tests(self):
+        # import here, cause outside the eggs aren't loaded
+        import pytest
+        errno = pytest.main(self.pytest_args)
+        sys.exit(errno)
+
 
 setup(name='alembic',
       version=VERSION,
@@ -50,8 +64,8 @@ setup(name='alembic',
       license='MIT',
       packages=find_packages('.', exclude=['examples*', 'test*']),
       include_package_data=True,
-      tests_require=['nose >= 0.11', 'mock'],
-      test_suite="alembic.testing.runner.setup_py_test",
+      tests_require=['pytest', 'mock', 'Mako'],
+      cmdclass={'test': PyTest},
       zip_safe=False,
       install_requires=requires,
       entry_points={

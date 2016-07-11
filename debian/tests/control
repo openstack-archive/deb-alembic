@@ -1,0 +1,9 @@
+Depends: python-alembic
+Test-Command: cd "$ADTTMP" &&
+    python -c "import alembic; print alembic.__version__" &&
+    python2-alembic -h >/dev/null
+
+Depends: python3-alembic
+Test-Command: cd "$ADTTMP" &&
+    python3 -c "import alembic; print(alembic.__version__)" &&
+    python3-alembic -h >/dev/null

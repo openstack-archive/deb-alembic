@@ -110,6 +110,8 @@ pre-fabricated :class:`~sqlalchemy.schema.Table` object; see
    added :paramref:`.Operations.batch_alter_table.reflect_args`
    and :paramref:`.Operations.batch_alter_table.reflect_kwargs` options.
 
+.. _sqlite_batch_constraints:
+
 Dealing with Constraints
 ------------------------
 
@@ -190,6 +192,23 @@ them directly, which can be via the
         ):
         batch_op.add_column(Column('foo', Integer))
 
+Changing the Type of Boolean, Enum and other implicit CHECK datatypes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The SQLAlchemy types :class:`~sqlalchemy.types.Boolean` and
+:class:`~sqlalchemy.types.Enum` are part of a category of types known as
+"schema" types; this style of type creates other structures along with the
+type itself, most commonly (but not always) a CHECK constraint.
+
+Alembic handles dropping and creating the CHECK constraints here automatically,
+including in the case of batch mode.  When changing the type of an existing
+column, what's necessary is that the existing type be specified fully::
+
+  with self.op.batch_alter_table("some_table"):
+      batch_op.alter_column(
+          'q', type_=Integer,
+          existing_type=Boolean(create_constraint=True, constraint_name="ck1"))
+
 Including CHECK constraints
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -203,19 +222,45 @@ recreated table::
         batch_op.add_column(Column('foo', Integer))
         batch_op.drop_column('bar')
 
+Note this only includes CHECK constraints that are explicitly stated
+as part of the table definition, not the CHECK constraints that are generated
+by datatypes such as :class:`~sqlalchemy.types.Boolean` or
+:class:`~sqlalchemy.types.Enum`.
 
 Dealing with Referencing Foreign Keys
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If the SQLite database is enforcing referential integrity with
-``PRAGMA FOREIGN KEYS``, this pragma may need to be disabled when the workflow
-mode proceeds, else remote constraints which refer to this table may prevent
-it from being dropped; additionally, for referential integrity to be
-re-enabled, it may be necessary to recreate the
-foreign keys on those remote tables to refer again to the new table (this
-is definitely the case on other databases, at least).  SQLite is normally used
-without referential integrity enabled so this won't be a problem for most
-users.
+It is important to note that batch table operations **do not work** with
+foreign keys that enforce referential integrity.  This because the
+target table is dropped; if foreign keys refer to it, this will raise
+an error.   On SQLite, whether or not foreign keys actually enforce is
+controlled by the ``PRAGMA FOREIGN KEYS`` pragma; this pragma, if in use,
+must be disabled when the workflow mode proceeds.   When the operation is
+complete, the batch-migrated table will have the same name
+that it started with, so those referring foreign keys will again
+refer to this table.
+
+A special case is dealing with self-referring foreign keys.  Here,
+Alembic takes a special step of recreating the self-referring foreign key
+as referring to the original table name, rather than at the "temp" table,
+so that like in the case of other foreign key constraints, when the table
+is renamed to its original name, the foreign key
+again references the correct table.   This operation only works when
+referential integrity is disabled, consistent with the same requirement
+for referring foreign keys from other tables.
+
+.. versionchanged:: 0.8.4 Self-referring foreign keys are created with the
+   target table name in batch mode, even though this table will temporarily
+   not exist when dropped.  This requires that the target database is not
+   enforcing referential integrity.
+
+When SQLite's ``PRAGMA FOREIGN KEYS`` mode is turned on, it does provide
+the service that foreign key constraints, including self-referential, will
+automatically be modified to point to their table across table renames,
+however this mode prevents the target table from being dropped as is required
+by a batch migration.  Therefore it may be necessary to manipulate the
+``PRAGMA FOREIGN KEYS`` setting if a migration seeks to rename a table vs.
+batch migrate it.
 
 .. _batch_offline_mode:
 
@@ -250,6 +295,10 @@ The above use pattern is pretty tedious and quite far off from Alembic's
 preferred style of working; however, if one needs to do SQLite-compatible
 "move and copy" migrations and need them to generate flat SQL files in
 "offline" mode, there's not much alternative.
+
+.. versionadded:: 0.7.6 Fully implemented the
+   :paramref:`~.Operations.batch_alter_table.copy_from`
+   parameter.
 
 
 Batch mode with Autogenerate

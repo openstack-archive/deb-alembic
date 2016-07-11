@@ -1,10 +1,13 @@
 from argparse import ArgumentParser
-from .compat import SafeConfigParser
+from .util.compat import SafeConfigParser
 import inspect
 import os
 import sys
 
-from . import command, util, package_dir, compat
+from . import command
+from . import util
+from . import package_dir
+from .util import compat
 
 
 class Config(object):
@@ -40,6 +43,21 @@ class Config(object):
         alembic_cfg.set_main_option("url", "postgresql://foo/bar")
         alembic_cfg.set_section_option("mysection", "foo", "bar")
 
+    .. warning::
+
+       When using programmatic configuration, make sure the
+       ``env.py`` file in use is compatible with the target configuration;
+       including that the call to Python ``logging.fileConfig()`` is
+       omitted if the programmatic configuration doesn't actually include
+       logging directives.
+
+    For passing non-string values to environments, such as connections and
+    engines, use the :attr:`.Config.attributes` dictionary::
+
+        with engine.begin() as connection:
+            alembic_cfg.attributes['connection'] = connection
+            command.upgrade(alembic_cfg, "head")
+
     :param file_: name of the .ini file to open.
     :param ini_section: name of the main Alembic section within the
      .ini file
@@ -49,7 +67,7 @@ class Config(object):
     :param stdout: buffer where the "print" output of commands will be sent.
      Defaults to ``sys.stdout``.
 
-     ..versionadded:: 0.4
+     .. versionadded:: 0.4
 
     :param config_args: A dictionary of keys and values that will be used
      for substitution in the alembic config file.  The dictionary as given
@@ -59,13 +77,22 @@ class Config(object):
      dictionary before the dictionary is passed to ``SafeConfigParser()``
      to parse the .ini file.
 
-     ..versionadded:: 0.7.0
+     .. versionadded:: 0.7.0
+
+    :param attributes: optional dictionary of arbitrary Python keys/values,
+     which will be populated into the :attr:`.Config.attributes` dictionary.
+
+     .. versionadded:: 0.7.5
+
+     .. seealso::
+
+        :ref:`connection_sharing`
 
     """
 
     def __init__(self, file_=None, ini_section='alembic', output_buffer=None,
                  stdout=sys.stdout, cmd_opts=None,
-                 config_args=util.immutabledict()):
+                 config_args=util.immutabledict(), attributes=None):
         """Construct a new :class:`.Config`
 
         """
@@ -75,6 +102,8 @@ class Config(object):
         self.stdout = stdout
         self.cmd_opts = cmd_opts
         self.config_args = dict(config_args)
+        if attributes:
+            self.attributes.update(attributes)
 
     cmd_opts = None
     """The command-line options passed to the ``alembic`` script.
@@ -101,6 +130,28 @@ class Config(object):
 
     """
 
+    @util.memoized_property
+    def attributes(self):
+        """A Python dictionary for storage of additional state.
+
+
+        This is a utility dictionary which can include not just strings but
+        engines, connections, schema objects, or anything else.
+        Use this to pass objects into an env.py script, such as passing
+        a :class:`sqlalchemy.engine.base.Connection` when calling
+        commands from :mod:`alembic.command` programmatically.
+
+        .. versionadded:: 0.7.5
+
+        .. seealso::
+
+            :ref:`connection_sharing`
+
+            :paramref:`.Config.attributes`
+
+        """
+        return {}
+
     def print_stdout(self, text, *arg):
         """Render a message to standard out."""
 
@@ -112,7 +163,7 @@ class Config(object):
 
     @util.memoized_property
     def file_config(self):
-        """Return the underlying :class:`ConfigParser` object.
+        """Return the underlying ``ConfigParser`` object.
 
         Direct access to the .ini file is available here,
         though the :meth:`.Config.get_section` and
@@ -154,8 +205,17 @@ class Config(object):
 
         This overrides whatever was in the .ini file.
 
+        :param name: name of the value
+
+        :param value: the value.  Note that this value is passed to
+         ``ConfigParser.set``, which supports variable interpolation using
+         pyformat (e.g. ``%(some_value)s``).   A raw percent sign not part of
+         an interpolation symbol must therefore be escaped, e.g. ``%%``.
+         The given value may refer to another value already in the file
+         using the interpolation format.
+
         """
-        self.file_config.set(self.config_ini_section, name, value)
+        self.set_section_option(self.config_ini_section, name, value)
 
     def remove_main_option(self, name):
         self.file_config.remove_option(self.config_ini_section, name)
@@ -167,7 +227,19 @@ class Config(object):
         The value here will override whatever was in the .ini
         file.
 
+        :param section: name of the section
+
+        :param name: name of the value
+
+        :param value: the value.  Note that this value is passed to
+         ``ConfigParser.set``, which supports variable interpolation using
+         pyformat (e.g. ``%(some_value)s``).   A raw percent sign not part of
+         an interpolation symbol must therefore be escaped, e.g. ``%%``.
+         The given value may refer to another value already in the file
+         using the interpolation format.
+
         """
+
         if not self.file_config.has_section(section):
             self.file_config.add_section(section)
         self.file_config.set(section, name, value)
@@ -247,6 +319,14 @@ class CommandLine(object):
                         action="store_true",
                         help="Allow a non-head revision as the "
                         "'head' to splice onto"
+                    )
+                ),
+                'depends_on': (
+                    "--depends-on",
+                    dict(
+                        action="append",
+                        help="Specify one or more revision identifiers "
+                        "which this revision should depend on."
                     )
                 ),
                 'rev_id': (

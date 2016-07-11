@@ -18,7 +18,11 @@ class FullEnvironmentTests(TestBase):
     @classmethod
     def setup_class(cls):
         staging_env()
-        cls.cfg = cfg = _no_sql_testing_config("mssql")
+        if util.sqla_105:
+            directives = "sqlalchemy.legacy_schema_aliasing=false"
+        else:
+            directives = ""
+        cls.cfg = cfg = _no_sql_testing_config("mssql", directives)
 
         cls.a, cls.b, cls.c = \
             three_rev_fixture(cfg)
@@ -105,6 +109,16 @@ class OpTest(TestBase):
             "exec('alter table t1 drop constraint ' + @const_name)")
         context.assert_contains("ALTER TABLE t1 DROP COLUMN c1")
 
+    @config.requirements.sqlalchemy_08
+    def test_drop_column_w_default_in_batch(self):
+        context = op_fixture('mssql')
+        with op.batch_alter_table('t1', schema=None) as batch_op:
+            batch_op.drop_column('c1', mssql_drop_default=True)
+            batch_op.drop_column('c2', mssql_drop_default=True)
+        context.assert_contains(
+            "exec('alter table t1 drop constraint ' + @const_name)")
+        context.assert_contains("ALTER TABLE t1 DROP COLUMN c1")
+
     def test_alter_column_drop_default(self):
         context = op_fixture('mssql')
         op.alter_column("t", "c", server_default=None)
@@ -116,10 +130,25 @@ class OpTest(TestBase):
         op.alter_column("t", "c", server_default=False)
         context.assert_()
 
+    def test_drop_column_w_schema(self):
+        context = op_fixture('mssql')
+        op.drop_column('t1', 'c1', schema='xyz')
+        context.assert_contains("ALTER TABLE xyz.t1 DROP COLUMN c1")
+
     def test_drop_column_w_check(self):
         context = op_fixture('mssql')
         op.drop_column('t1', 'c1', mssql_drop_check=True)
         op.drop_column('t1', 'c2', mssql_drop_check=True)
+        context.assert_contains(
+            "exec('alter table t1 drop constraint ' + @const_name)")
+        context.assert_contains("ALTER TABLE t1 DROP COLUMN c1")
+
+    @config.requirements.sqlalchemy_08
+    def test_drop_column_w_check_in_batch(self):
+        context = op_fixture('mssql')
+        with op.batch_alter_table('t1', schema=None) as batch_op:
+            batch_op.drop_column('c1', mssql_drop_check=True)
+            batch_op.drop_column('c2', mssql_drop_check=True)
         context.assert_contains(
             "exec('alter table t1 drop constraint ' + @const_name)")
         context.assert_contains("ALTER TABLE t1 DROP COLUMN c1")
@@ -141,6 +170,15 @@ class OpTest(TestBase):
     def test_drop_column_w_fk(self):
         context = op_fixture('mssql')
         op.drop_column('t1', 'c1', mssql_drop_foreign_key=True)
+        context.assert_contains(
+            "exec('alter table t1 drop constraint ' + @const_name)")
+        context.assert_contains("ALTER TABLE t1 DROP COLUMN c1")
+
+    @config.requirements.sqlalchemy_08
+    def test_drop_column_w_fk_in_batch(self):
+        context = op_fixture('mssql')
+        with op.batch_alter_table('t1', schema=None) as batch_op:
+            batch_op.drop_column('c1', mssql_drop_foreign_key=True)
         context.assert_contains(
             "exec('alter table t1 drop constraint ' + @const_name)")
         context.assert_contains("ALTER TABLE t1 DROP COLUMN c1")

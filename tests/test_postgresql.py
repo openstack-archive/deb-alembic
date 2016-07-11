@@ -1,16 +1,18 @@
 
 from sqlalchemy import DateTime, MetaData, Table, Column, text, Integer, \
     String, Interval, Sequence, Numeric, BigInteger, Float, Numeric
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.engine.reflection import Inspector
 from alembic.operations import Operations
 from sqlalchemy.sql import table, column
 from alembic.autogenerate.compare import \
     _compare_server_default, _compare_tables, _render_server_default_for_compare
 
+from alembic.operations import ops
 from alembic import command, util
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from alembic.autogenerate import api
 
 from alembic.testing import eq_, provide_metadata
 from alembic.testing.env import staging_env, clear_staging_env, \
@@ -162,33 +164,21 @@ class PostgresqlDefaultCompareTest(TestBase):
     def setup_class(cls):
         cls.bind = config.db
         staging_env()
-        context = MigrationContext.configure(
+        cls.migration_context = MigrationContext.configure(
             connection=cls.bind.connect(),
             opts={
                 'compare_type': True,
                 'compare_server_default': True
             }
         )
-        connection = context.bind
-        cls.autogen_context = {
-            'imports': set(),
-            'connection': connection,
-            'dialect': connection.dialect,
-            'context': context,
-            'opts': {
-                'compare_type': True,
-                'compare_server_default': True,
-                'alembic_module_prefix': 'op.',
-                'sqlalchemy_module_prefix': 'sa.',
-            }
-        }
+
+    def setUp(self):
+        self.metadata = MetaData(self.bind)
+        self.autogen_context = api.AutogenContext(self.migration_context)
 
     @classmethod
     def teardown_class(cls):
         clear_staging_env()
-
-    def setUp(self):
-        self.metadata = MetaData(self.bind)
 
     def tearDown(self):
         self.metadata.drop_all()
@@ -212,9 +202,12 @@ class PostgresqlDefaultCompareTest(TestBase):
         cols = insp.get_columns(t1.name)
         insp_col = Column("somecol", cols[0]['type'],
                           server_default=text(cols[0]['default']))
-        diffs = []
-        _compare_server_default(None, "test", "somecol", insp_col,
-                                t2.c.somecol, diffs, self.autogen_context)
+        op = ops.AlterColumnOp("test", "somecol")
+        _compare_server_default(
+            self.autogen_context, op,
+            None, "test", "somecol", insp_col, t2.c.somecol)
+
+        diffs = op.to_diff_tuple()
         eq_(bool(diffs), diff_expected)
 
     def _compare_default(
@@ -225,7 +218,7 @@ class PostgresqlDefaultCompareTest(TestBase):
         t1.create(self.bind, checkfirst=True)
         insp = Inspector.from_engine(self.bind)
         cols = insp.get_columns(t1.name)
-        ctx = self.autogen_context['context']
+        ctx = self.autogen_context.migration_context
 
         return ctx.impl.compare_server_default(
             None,
@@ -239,6 +232,13 @@ class PostgresqlDefaultCompareTest(TestBase):
         self._compare_default_roundtrip(
             Interval,
             "14 days"
+        )
+
+    @config.requirements.postgresql_uuid_ossp
+    def test_compare_uuid_text(self):
+        self._compare_default_roundtrip(
+            UUID,
+            text("uuid_generate_v4()")
         )
 
     def test_compare_interval_text(self):
@@ -338,6 +338,21 @@ class PostgresqlDefaultCompareTest(TestBase):
             diff_expected=False
         )
 
+    def test_compare_unicode_literal(self):
+        self._compare_default_roundtrip(
+            String(),
+            u'im a default'
+        )
+
+    # TOOD: will need to actually eval() the repr() and
+    # spend more effort figuring out exactly the kind of expression
+    # to use
+    def _TODO_test_compare_character_str_w_singlequote(self):
+        self._compare_default_roundtrip(
+            String(),
+            "hel''lo",
+        )
+
     def test_compare_character_str(self):
         self._compare_default_roundtrip(
             String(),
@@ -385,26 +400,16 @@ class PostgresqlDetectSerialTest(TestBase):
         cls.bind = config.db
         cls.conn = cls.bind.connect()
         staging_env()
-        context = MigrationContext.configure(
+        cls.migration_context = MigrationContext.configure(
             connection=cls.conn,
             opts={
                 'compare_type': True,
                 'compare_server_default': True
             }
         )
-        connection = context.bind
-        cls.autogen_context = {
-            'imports': set(),
-            'connection': connection,
-            'dialect': connection.dialect,
-            'context': context,
-            'opts': {
-                'compare_type': True,
-                'compare_server_default': True,
-                'alembic_module_prefix': 'op.',
-                'sqlalchemy_module_prefix': 'sa.',
-            }
-        }
+
+    def setUp(self):
+        self.autogen_context = api.AutogenContext(self.migration_context)
 
     @classmethod
     def teardown_class(cls):
@@ -420,24 +425,26 @@ class PostgresqlDetectSerialTest(TestBase):
         self.metadata.create_all(config.db)
 
         insp = Inspector.from_engine(config.db)
-        diffs = []
+
+        uo = ops.UpgradeOps(ops=[])
         _compare_tables(
             set([(None, 't')]), set([]),
-            [],
-            insp, self.metadata, diffs, self.autogen_context)
+            insp, self.metadata, uo, self.autogen_context)
+        diffs = uo.as_diffs()
         tab = diffs[0][1]
+
         eq_(_render_server_default_for_compare(
             tab.c.x.server_default, tab.c.x, self.autogen_context),
             c_expected)
 
         insp = Inspector.from_engine(config.db)
-        diffs = []
+        uo = ops.UpgradeOps(ops=[])
         m2 = MetaData()
         Table('t', m2, Column('x', BigInteger()))
         _compare_tables(
             set([(None, 't')]), set([(None, 't')]),
-            [],
-            insp, m2, diffs, self.autogen_context)
+            insp, m2, uo, self.autogen_context)
+        diffs = uo.as_diffs()
         server_default = diffs[0][0][4]['existing_server_default']
         eq_(_render_server_default_for_compare(
             server_default, tab.c.x, self.autogen_context),

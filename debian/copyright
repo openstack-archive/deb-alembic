@@ -1,10 +1,21 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: alembic
 Upstream-Contact: Mike Bayer
-Source: http://pypi.python.org/pypi/alembic
+Source: https://pypi.python.org/pypi/alembic
 
 Files: *
-Copyright: 2009-2015, Michael Bayer
+Copyright: 2009-2016, Michael Bayer
+License: MIT
+
+Files: alembic/testing/config.py
+       alembic/testing/engines.py
+       alembic/testing/exclusions.py
+       alembic/testing/mock.py
+       alembic/testing/plugin/noseplugin.py
+       alembic/testing/plugin/plugin_base.py
+       alembic/testing/warnings.py
+       alembic/testing/runner.py
+Copyright: (c) 2005-2016 the SQLAlchemy authors and contributors
 License: MIT
 
 Files: debian/*
@@ -14,6 +25,7 @@ Copyright: (c) 2012, Matthias Kümmerer <matthias@matthias-k.org>
            (c) 2014, Thomas Bechtold <toabctl@debian.org>
            (c) 2014, Piotr Ożarowski <piotr@debian.org>
            (c) 2013-2015, Thomas Goirand <zigo@debian.org>
+           (c) 2016, Ondřej Nový <novy@ondrej.org>
 License: MIT
 
 License: MIT

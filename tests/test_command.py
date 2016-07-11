@@ -5,7 +5,7 @@ from alembic.testing.fixtures import TestBase, capture_context_buffer
 from alembic.testing.env import staging_env, _sqlite_testing_config, \
     three_rev_fixture, clear_staging_env, _no_sql_testing_config, \
     _sqlite_file_db, write_script, env_file_fixture
-from alembic.testing import eq_, assert_raises_message
+from alembic.testing import eq_, assert_raises_message, mock
 from alembic import util
 
 
@@ -131,7 +131,7 @@ finally:
 
     def test_create_rev_autogen_db_not_up_to_date(self):
         self._env_fixture()
-        command.revision(self.cfg)
+        assert command.revision(self.cfg)
         assert_raises_message(
             util.CommandError,
             "Target database is not up to date.",
@@ -184,6 +184,20 @@ finally:
             command.revision, self.cfg, autogenerate=True
         )
 
+    def test_err_correctly_raised_on_dupe_rows(self):
+        self._env_fixture()
+        command.revision(self.cfg)
+        r2 = command.revision(self.cfg)
+        db = _sqlite_file_db()
+        command.upgrade(self.cfg, "head")
+        db.execute("insert into alembic_version values ('%s')" % r2.revision)
+        assert_raises_message(
+            util.CommandError,
+            "Online migration expected to match one row when "
+            "updating .* in 'alembic_version'; 2 found",
+            command.downgrade, self.cfg, "-1"
+        )
+
     def test_create_rev_plain_need_to_select_head(self):
         self._env_fixture()
         command.revision(self.cfg)
@@ -217,6 +231,55 @@ finally:
         command.merge(self.cfg, "heads")
         command.upgrade(self.cfg, "heads")
         command.revision(self.cfg, autogenerate=True)
+
+    def test_create_rev_depends_on(self):
+        self._env_fixture()
+        command.revision(self.cfg)
+        rev2 = command.revision(self.cfg)
+        rev3 = command.revision(self.cfg, depends_on=rev2.revision)
+        eq_(
+            rev3._resolved_dependencies, (rev2.revision, )
+        )
+
+        rev4 = command.revision(
+            self.cfg, depends_on=[rev2.revision, rev3.revision])
+        eq_(
+            rev4._resolved_dependencies, (rev2.revision, rev3.revision)
+        )
+
+    def test_create_rev_depends_on_branch_label(self):
+        self._env_fixture()
+        command.revision(self.cfg)
+        rev2 = command.revision(self.cfg, branch_label='foobar')
+        rev3 = command.revision(self.cfg, depends_on='foobar')
+        eq_(
+            rev3.dependencies, 'foobar'
+        )
+        eq_(
+            rev3._resolved_dependencies, (rev2.revision, )
+        )
+
+    def test_create_rev_depends_on_partial_revid(self):
+        self._env_fixture()
+        command.revision(self.cfg)
+        rev2 = command.revision(self.cfg)
+        assert len(rev2.revision) > 7
+        rev3 = command.revision(self.cfg, depends_on=rev2.revision[0:4])
+        eq_(
+            rev3.dependencies, rev2.revision
+        )
+        eq_(
+            rev3._resolved_dependencies, (rev2.revision, )
+        )
+
+    def test_create_rev_invalid_depends_on(self):
+        self._env_fixture()
+        command.revision(self.cfg)
+        assert_raises_message(
+            util.CommandError,
+            "Can't locate revision identified by 'invalid'",
+            command.revision, self.cfg, depends_on='invalid'
+        )
 
     def test_create_rev_autogenerate_db_not_up_to_date_post_merge(self):
         self._env_fixture()
@@ -371,3 +434,73 @@ down_revision = '%s'
             self.bind.scalar("select version_num from alembic_version"),
             self.a
         )
+
+
+class EditTest(TestBase):
+
+    @classmethod
+    def setup_class(cls):
+        cls.env = staging_env()
+        cls.cfg = _sqlite_testing_config()
+        cls.a, cls.b, cls.c = three_rev_fixture(cls.cfg)
+
+    @classmethod
+    def teardown_class(cls):
+        clear_staging_env()
+
+    def setUp(self):
+        command.stamp(self.cfg, "base")
+
+    def test_edit_head(self):
+        expected_call_arg = '%s/scripts/versions/%s_revision_c.py' % (
+            EditTest.cfg.config_args['here'],
+            EditTest.c
+        )
+
+        with mock.patch('alembic.util.edit') as edit:
+            command.edit(self.cfg, "head")
+            edit.assert_called_with(expected_call_arg)
+
+    def test_edit_b(self):
+        expected_call_arg = '%s/scripts/versions/%s_revision_b.py' % (
+            EditTest.cfg.config_args['here'],
+            EditTest.b
+        )
+
+        with mock.patch('alembic.util.edit') as edit:
+            command.edit(self.cfg, self.b[0:3])
+            edit.assert_called_with(expected_call_arg)
+
+    def test_edit_with_missing_editor(self):
+        with mock.patch('editor.edit') as edit_mock:
+            edit_mock.side_effect = OSError("file not found")
+            assert_raises_message(
+                util.CommandError,
+                'file not found',
+                util.edit,
+                "/not/a/file.txt")
+
+    def test_edit_no_revs(self):
+        assert_raises_message(
+            util.CommandError,
+            "No revision files indicated by symbol 'base'",
+            command.edit,
+            self.cfg, "base")
+
+    def test_edit_no_current(self):
+        assert_raises_message(
+            util.CommandError,
+            "No current revisions",
+            command.edit,
+            self.cfg, "current")
+
+    def test_edit_current(self):
+        expected_call_arg = '%s/scripts/versions/%s_revision_b.py' % (
+            EditTest.cfg.config_args['here'],
+            EditTest.b
+        )
+
+        command.stamp(self.cfg, self.b)
+        with mock.patch('alembic.util.edit') as edit:
+            command.edit(self.cfg, "current")
+            edit.assert_called_with(expected_call_arg)

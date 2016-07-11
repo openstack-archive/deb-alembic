@@ -1,10 +1,9 @@
 import re
 import collections
-import itertools
 
-from . import util
+from .. import util
 from sqlalchemy import util as sqlautil
-from . import compat
+from ..util import compat
 
 _relative_destination = re.compile(r'(?:(.+?)@)?(\w+)?((?:\+|-)\d+)')
 
@@ -34,7 +33,9 @@ class MultipleHeads(RevisionError):
 
 
 class ResolutionError(RevisionError):
-    pass
+    def __init__(self, message, argument):
+        super(ResolutionError, self).__init__(message)
+        self.argument = argument
 
 
 class RevisionMap(object):
@@ -116,6 +117,7 @@ class RevisionMap(object):
         self._real_bases = ()
 
         has_branch_labels = set()
+        has_depends_on = set()
         for revision in self._generator():
 
             if revision.revision in map_:
@@ -124,12 +126,22 @@ class RevisionMap(object):
             map_[revision.revision] = revision
             if revision.branch_labels:
                 has_branch_labels.add(revision)
+            if revision.dependencies:
+                has_depends_on.add(revision)
             heads.add(revision.revision)
             _real_heads.add(revision.revision)
             if revision.is_base:
                 self.bases += (revision.revision, )
             if revision._is_real_base:
                 self._real_bases += (revision.revision, )
+
+        # add the branch_labels to the map_.  We'll need these
+        # to resolve the dependencies.
+        for revision in has_branch_labels:
+            self._map_branch_labels(revision, map_)
+
+        for revision in has_depends_on:
+            self._add_depends_on(revision, map_)
 
         for rev in map_.values():
             for downrev in rev._all_down_revisions:
@@ -147,10 +159,10 @@ class RevisionMap(object):
         self._real_heads = tuple(_real_heads)
 
         for revision in has_branch_labels:
-            self._add_branches(revision, map_)
+            self._add_branches(revision, map_, map_branch_labels=False)
         return map_
 
-    def _add_branches(self, revision, map_):
+    def _map_branch_labels(self, revision, map_):
         if revision.branch_labels:
             for branch_label in revision._orig_branch_labels:
                 if branch_label in map_:
@@ -161,6 +173,12 @@ class RevisionMap(object):
                             map_[branch_label].revision)
                     )
                 map_[branch_label] = revision
+
+    def _add_branches(self, revision, map_, map_branch_labels=True):
+        if map_branch_labels:
+            self._map_branch_labels(revision, map_)
+
+        if revision.branch_labels:
             revision.branch_labels.update(revision.branch_labels)
             for node in self._get_descendant_nodes(
                     [revision], map_, include_dependencies=False):
@@ -168,13 +186,21 @@ class RevisionMap(object):
 
             parent = node
             while parent and \
-                    not parent._is_real_branch_point and not parent.is_merge_point:
+                    not parent._is_real_branch_point and \
+                    not parent.is_merge_point:
 
                 parent.branch_labels.update(revision.branch_labels)
                 if parent.down_revision:
                     parent = map_[parent.down_revision]
                 else:
                     break
+
+    def _add_depends_on(self, revision, map_):
+        if revision.dependencies:
+            revision._resolved_dependencies = tuple(
+                map_[dep].revision for dep
+                in util.to_tuple(revision.dependencies)
+            )
 
     def add_revision(self, revision, _replace=False):
         """add a single revision to an existing map.
@@ -192,6 +218,8 @@ class RevisionMap(object):
 
         map_[revision.revision] = revision
         self._add_branches(revision, map_)
+        self._add_depends_on(revision, map_)
+
         if revision.is_base:
             self.bases += (revision.revision, )
         if revision._is_real_base:
@@ -304,7 +332,8 @@ class RevisionMap(object):
             try:
                 nonbranch_rev = self._revision_for_ident(branch_label)
             except ResolutionError:
-                raise ResolutionError("No such branch: '%s'" % branch_label)
+                raise ResolutionError(
+                    "No such branch: '%s'" % branch_label, branch_label)
             else:
                 return nonbranch_rev
         else:
@@ -326,14 +355,15 @@ class RevisionMap(object):
                 revs = self.filter_for_lineage(revs, check_branch)
             if not revs:
                 raise ResolutionError(
-                    "No such revision or branch '%s'" % resolved_id)
+                    "No such revision or branch '%s'" % resolved_id,
+                    resolved_id)
             elif len(revs) > 1:
                 raise ResolutionError(
                     "Multiple revisions start "
                     "with '%s': %s..." % (
                         resolved_id,
                         ", ".join("'%s'" % r for r in revs[0:3])
-                    ))
+                    ), resolved_id)
             else:
                 revision = self._revision_map[revs[0]]
 
@@ -342,7 +372,7 @@ class RevisionMap(object):
                     revision.revision, branch_rev.revision):
                 raise ResolutionError(
                     "Revision %s is not a member of branch '%s'" %
-                    (revision.revision, check_branch))
+                    (revision.revision, check_branch), resolved_id)
         return revision
 
     def filter_for_lineage(
@@ -353,9 +383,7 @@ class RevisionMap(object):
         if branch_label:
             shares.append(branch_label)
         if id_:
-            shares.append(id_[0])
-
-        #shares = branch_label or (id_[0] if id_ else None)
+            shares.extend(id_)
 
         return [
             tg for tg in targets
@@ -547,17 +575,24 @@ class RevisionMap(object):
         if map_ is None:
             map_ = self._revision_map
 
+        seen = set()
         todo = collections.deque()
         for target in targets:
+
             todo.append(target)
             if check:
                 per_target = set()
+
             while todo:
                 rev = todo.pop()
-                todo.extend(
-                    map_[rev_id] for rev_id in fn(rev))
                 if check:
                     per_target.add(rev)
+
+                if rev in seen:
+                    continue
+                seen.add(rev)
+                todo.extend(
+                    map_[rev_id] for rev_id in fn(rev))
                 yield rev
             if check and per_target.intersection(targets).difference([target]):
                 raise RevisionError(
@@ -572,7 +607,6 @@ class RevisionMap(object):
         across branches as a whole.
 
         """
-
         requested_lowers = self.get_revisions(lower)
 
         # some complexity to accommodate an iteration where some
@@ -584,7 +618,8 @@ class RevisionMap(object):
         limit_to_lower_branch = \
             isinstance(lower, compat.string_types) and lower.endswith('@base')
 
-        uppers = self.get_revisions(upper)
+        uppers = util.dedupe_tuple(self.get_revisions(upper))
+
         if not uppers and not requested_lowers:
             raise StopIteration()
 
@@ -645,7 +680,13 @@ class RevisionMap(object):
             r for r in uppers if r.revision in total_space)
 
         # iterate for total_space being emptied out
+        total_space_modified = True
         while total_space:
+
+            if not total_space_modified:
+                raise RevisionError(
+                    "Dependency resolution failed; iteration can't proceed")
+            total_space_modified = False
             # when everything non-branch pending is consumed,
             # add to the todo any branch nodes that have no
             # descendants left in the queue
@@ -666,6 +707,7 @@ class RevisionMap(object):
             while todo:
                 rev = todo.popleft()
                 total_space.remove(rev.revision)
+                total_space_modified = True
 
                 # do depth first for elements within branches,
                 # don't consume any actual branch nodes
@@ -728,8 +770,23 @@ class Revision(object):
         self.revision = revision
         self.down_revision = tuple_rev_as_scalar(down_revision)
         self.dependencies = tuple_rev_as_scalar(dependencies)
+        self._resolved_dependencies = ()
         self._orig_branch_labels = util.to_tuple(branch_labels, default=())
         self.branch_labels = set(self._orig_branch_labels)
+
+    def __repr__(self):
+        args = [
+            repr(self.revision),
+            repr(self.down_revision)
+        ]
+        if self.dependencies:
+            args.append("dependencies=%r" % self.dependencies)
+        if self.branch_labels:
+            args.append("branch_labels=%r" % self.branch_labels)
+        return "%s(%s)" % (
+            self.__class__.__name__,
+            ", ".join(args)
+        )
 
     def add_nextrev(self, revision):
         self._all_nextrev = self._all_nextrev.union([revision.revision])
@@ -739,7 +796,7 @@ class Revision(object):
     @property
     def _all_down_revisions(self):
         return util.to_tuple(self.down_revision, default=()) + \
-            util.to_tuple(self.dependencies, default=())
+            self._resolved_dependencies
 
     @property
     def _versioned_down_revisions(self):
@@ -771,6 +828,9 @@ class Revision(object):
         """Return True if this :class:`.Revision` is a "real" base revision,
         e.g. that it has no dependencies either."""
 
+        # we use self.dependencies here because this is called up
+        # in initialization where _real_dependencies isn't set up
+        # yet
         return self.down_revision is None and self.dependencies is None
 
     @property
