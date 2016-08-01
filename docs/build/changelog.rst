@@ -4,6 +4,76 @@ Changelog
 ==========
 
 .. changelog::
+    :version: 0.8.7
+    :released: July 26, 2016
+
+    .. change::
+      :tags: bug, versioning
+      :tickets: 336
+
+      Fixed bug where upgrading to the head of a branch which is already
+      present would fail, only if that head were also the dependency
+      of a different branch that is also upgraded, as the revision system
+      would see this as trying to go in the wrong direction.   The check
+      here has been refined to distinguish between same-branch revisions
+      out of order vs. movement along sibling branches.
+
+    .. change::
+      :tags: bug, versioning
+      :tickets: 379
+
+      Adjusted the version traversal on downgrade
+      such that we can downgrade to a version that is a dependency for
+      a version in a different branch, *without* needing to remove that
+      dependent version as well.  Previously, the target version would be
+      seen as a "merge point" for it's normal up-revision as well as the
+      dependency.  This integrates with the changes for :ticket:`377`
+      and :ticket:`378` to improve treatment of branches with dependencies
+      overall.
+
+    .. change::
+      :tags: bug, versioning
+      :tickets: 377
+
+      Fixed bug where a downgrade to a version that is also a dependency
+      to a different branch would fail, as the system attempted to treat
+      this as an "unmerge" of a merge point, when in fact it doesn't have
+      the other side of the merge point available for update.
+
+    .. change::
+      :tags: bug, versioning
+      :tickets: 378
+
+      Fixed bug where the "alembic current" command wouldn't show a revision
+      as a current head if it were also a dependency of a version in a
+      different branch that's also applied.   Extra logic is added to
+      extract "implied" versions of different branches from the top-level
+      versions listed in the alembic_version table.
+
+    .. change::
+      :tags: bug, versioning
+
+      Fixed bug where a repr() or str() of a Script object would fail
+      if the script had multiple dependencies.
+
+    .. change::
+      :tags: bug, autogenerate
+
+      Fixed bug in autogen where if the DB connection sends the default
+      schema as "None", this "None" would be removed from the list of
+      schemas to check if include_schemas were set.  This could possibly
+      impact using include_schemas with SQLite.
+
+    .. change::
+      :tags: bug, batch
+
+      Small adjustment made to the batch handling for reflected CHECK
+      constraints to accommodate for SQLAlchemy 1.1 now reflecting these.
+      Batch mode still does not support CHECK constraints from the reflected
+      table as these can't be easily differentiated from the ones created
+      by types such as Boolean.
+
+.. changelog::
     :version: 0.8.6
     :released: April 14, 2016
 
