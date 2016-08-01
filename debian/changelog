@@ -2,6 +2,7 @@ alembic (0.8.7-1) UNRELEASED; urgency=medium
 
   * New upstream release
   * d/{control,copyright}: Use my @debian.org email address
+  * Rebased d/p/disable-failing-test.patch
 
  -- Ondřej Nový <onovy@debian.org>  Mon, 20 Jun 2016 19:55:55 +0200
 
