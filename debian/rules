@@ -1,9 +1,6 @@
 #!/usr/bin/make -f
 
-PYTHONS:=$(shell pyversions -vr)
-PYTHON3S:=$(shell py3versions -vr)
-
-UPSTREAM_GIT    ?= https://bitbucket.org/zzzeek/alembic.git
+UPSTREAM_GIT ?= https://bitbucket.org/zzzeek/alembic.git
 include /usr/share/openstack-pkg-tools/pkgos.make
 
 %:
@@ -19,17 +16,7 @@ override_dh_auto_clean:
 	rm -rf build
 
 override_dh_install:
-	set -e ; for pyvers in $(PYTHONS); do \
-		python$$pyvers setup.py install --install-layout=deb \
-			--root $(CURDIR)/debian/python-alembic; \
-	done
-	set -e ; for pyvers in $(PYTHON3S); do \
-		python$$pyvers setup.py install --install-layout=deb \
-			--root $(CURDIR)/debian/python3-alembic; \
-	done
-	rm -f $(CURDIR)/debian/python*/usr/lib/python*/dist-packages/*.pth
-	mv $(CURDIR)/debian/python-alembic/usr/bin/alembic $(CURDIR)/debian/python-alembic/usr/bin/python2-alembic
-	mv $(CURDIR)/debian/python3-alembic/usr/bin/alembic $(CURDIR)/debian/python3-alembic/usr/bin/python3-alembic
+	pkgos-dh_auto_install
 
 override_dh_auto_test:
 	py.test

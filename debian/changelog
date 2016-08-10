@@ -4,6 +4,7 @@ alembic (0.8.7-2) UNRELEASED; urgency=medium
   * Bump required version of python{3,}-sqlalchemy to 1.0
   * Use Python 3 version of Sphinx to builds docs
   * Bump required version of openstack-pkg-tools to 52~
+  * d/rules: Cleanup and use pkgos-dh_auto_install
 
  -- Ondřej Nový <onovy@debian.org>  Wed, 10 Aug 2016 10:57:02 +0200
 
