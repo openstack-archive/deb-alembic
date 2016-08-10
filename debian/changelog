@@ -1,3 +1,9 @@
+alembic (0.8.7-1~bpo8+1) jessie-backports; urgency=medium
+
+  * Rebuild for jessie-backports.
+
+ -- Ondřej Nový <onovy@debian.org>  Wed, 10 Aug 2016 10:34:47 +0200
+
 alembic (0.8.7-1) unstable; urgency=medium
 
   * New upstream release
