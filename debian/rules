@@ -19,8 +19,9 @@ override_dh_install:
 	pkgos-dh_auto_install
 
 override_dh_auto_test:
-	py.test
-	py.test-3
+	set -e ; for pyvers in 2.7 ${PYTHON3S}; do \
+		python$$pyvers -m pytest ; \
+	done
 
 help2man:
 	help2man --version-string=$(VERSION) -n "lightweight database migration tool for usage with the SQLAlchemy" -N alembic > alembic.1
