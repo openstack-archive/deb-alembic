@@ -1,3 +1,9 @@
+alembic (0.8.7-2) UNRELEASED; urgency=medium
+
+  * Added python{3,}-editor to build depends
+
+ -- Ondřej Nový <onovy@debian.org>  Wed, 10 Aug 2016 10:57:02 +0200
+
 alembic (0.8.7-1) unstable; urgency=medium
 
   * New upstream release
