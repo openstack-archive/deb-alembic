@@ -3,9 +3,9 @@ Author: Thomas Goirand <zigo@debian.org>
 Forwarded: not-needed
 Last-Update: 2015-09-02
 
---- alembic-0.8.2.orig/tests/test_command.py
-+++ alembic-0.8.2/tests/test_command.py
-@@ -471,15 +471,6 @@ class EditTest(TestBase):
+--- a/tests/test_command.py
++++ b/tests/test_command.py
+@@ -536,15 +536,6 @@
              command.edit(self.cfg, self.b[0:3])
              edit.assert_called_with(expected_call_arg)
  
