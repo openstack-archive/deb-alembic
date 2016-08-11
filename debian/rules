@@ -6,22 +6,21 @@ include /usr/share/openstack-pkg-tools/pkgos.make
 %:
 	dh $@ --buildsystem=python_distutils --with=python2,python3,sphinxdoc
 
-override_dh_auto_build:
-	dh_auto_build
-	http_proxy='localhost' make -C docs/build html
+override_dh_sphinxdoc:
+ifeq (,$(findstring nodocs, $(DEB_BUILD_OPTIONS)))
+	sphinx-build -b html docs/build $(CURDIR)/debian/alembic/usr/share/doc/alembic/html
+	dh_sphinxdoc
+endif
 
-override_dh_auto_clean:
-	dh_auto_clean
-	make -C docs/build clean
-	rm -rf build
-
-override_dh_install:
+override_dh_auto_install:
 	pkgos-dh_auto_install
 
 override_dh_auto_test:
+ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 	set -e ; for pyvers in 2.7 ${PYTHON3S}; do \
 		python$$pyvers -m pytest ; \
 	done
+endif
 
 help2man:
 	help2man --version-string=$(VERSION) -n "lightweight database migration tool for usage with the SQLAlchemy" -N alembic > alembic.1
