@@ -7,6 +7,8 @@ alembic (0.8.7-2) UNRELEASED; urgency=medium
   * d/rules
     - Cleanup and use pkgos-dh_auto_install
     - Run tests on all Python versions
+  * Removed d/p/disable-failing-test.patch
+    (Not needed anymore)
 
  -- Ondřej Nový <onovy@debian.org>  Wed, 10 Aug 2016 10:57:02 +0200
 
