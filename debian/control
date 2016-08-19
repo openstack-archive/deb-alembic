@@ -6,22 +6,24 @@ Uploaders: Thomas Goirand <zigo@debian.org>,
            Ondřej Nový <onovy@debian.org>,
 Build-Depends: debhelper (>= 9),
                dh-python,
-               openstack-pkg-tools,
+               openstack-pkg-tools (>= 52~),
                python-all,
-               python-changelog,
                python-setuptools,
-               python-sphinx,
-               python-sphinx-paramlinks,
                python3-all,
+               python3-changelog,
                python3-setuptools,
-Build-Depends-Indep: python-mako,
+               python3-sphinx,
+               python3-sphinx-paramlinks,
+Build-Depends-Indep: python-editor,
+                     python-mako,
                      python-mock,
                      python-pytest,
-                     python-sqlalchemy,
+                     python-sqlalchemy (>= 1.0),
+                     python3-editor,
                      python3-mako,
                      python3-mock,
                      python3-pytest,
-                     python3-sqlalchemy,
+                     python3-sqlalchemy (>= 1.0),
 Standards-Version: 3.9.8
 Vcs-Browser: https://anonscm.debian.org/cgit/openstack/alembic.git
 Vcs-Git: https://anonscm.debian.org/git/openstack/alembic.git
@@ -52,10 +54,7 @@ Description: lightweight database migration tool for SQLAlchemy
 
 Package: python-alembic
 Architecture: all
-Depends: python-editor,
-         python-mako,
-         python-pkg-resources,
-         python-sqlalchemy,
+Depends: python-pkg-resources,
          ${misc:Depends},
          ${python:Depends},
 Breaks: alembic (<< 0.6.3+ds-2),
@@ -77,10 +76,7 @@ Description: lightweight database migration tool for SQLAlchemy - Python 2.x
 
 Package: python3-alembic
 Architecture: all
-Depends: python3-editor,
-         python3-mako,
-         python3-pkg-resources,
-         python3-sqlalchemy,
+Depends: python3-pkg-resources,
          ${misc:Depends},
          ${python3:Depends},
          ${sphinxdoc:Depends},

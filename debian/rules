@@ -1,39 +1,26 @@
 #!/usr/bin/make -f
 
-PYTHONS:=$(shell pyversions -vr)
-PYTHON3S:=$(shell py3versions -vr)
-
-UPSTREAM_GIT    ?= https://bitbucket.org/zzzeek/alembic.git
+UPSTREAM_GIT ?= https://bitbucket.org/zzzeek/alembic.git
 include /usr/share/openstack-pkg-tools/pkgos.make
 
 %:
 	dh $@ --buildsystem=python_distutils --with=python2,python3,sphinxdoc
 
-override_dh_auto_build:
-	dh_auto_build
-	http_proxy='localhost' make -C docs/build html
+override_dh_sphinxdoc:
+ifeq (,$(findstring nodocs, $(DEB_BUILD_OPTIONS)))
+	sphinx-build -b html docs/build $(CURDIR)/debian/alembic/usr/share/doc/alembic/html
+	dh_sphinxdoc
+endif
 
-override_dh_auto_clean:
-	dh_auto_clean
-	make -C docs/build clean
-	rm -rf build
-
-override_dh_install:
-	set -e ; for pyvers in $(PYTHONS); do \
-		python$$pyvers setup.py install --install-layout=deb \
-			--root $(CURDIR)/debian/python-alembic; \
-	done
-	set -e ; for pyvers in $(PYTHON3S); do \
-		python$$pyvers setup.py install --install-layout=deb \
-			--root $(CURDIR)/debian/python3-alembic; \
-	done
-	rm -f $(CURDIR)/debian/python*/usr/lib/python*/dist-packages/*.pth
-	mv $(CURDIR)/debian/python-alembic/usr/bin/alembic $(CURDIR)/debian/python-alembic/usr/bin/python2-alembic
-	mv $(CURDIR)/debian/python3-alembic/usr/bin/alembic $(CURDIR)/debian/python3-alembic/usr/bin/python3-alembic
+override_dh_auto_install:
+	pkgos-dh_auto_install
 
 override_dh_auto_test:
-	py.test
-	py.test-3
+ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
+	set -e ; for pyvers in 2.7 ${PYTHON3S}; do \
+		python$$pyvers -m pytest ; \
+	done
+endif
 
 help2man:
 	help2man --version-string=$(VERSION) -n "lightweight database migration tool for usage with the SQLAlchemy" -N alembic > alembic.1

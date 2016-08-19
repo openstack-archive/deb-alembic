@@ -1,8 +1,16 @@
-alembic (0.8.7-1~bpo8+1) jessie-backports; urgency=medium
+alembic (0.8.7-2) unstable; urgency=medium
 
-  * Rebuild for jessie-backports.
+  * Added python{3,}-editor to build depends
+  * Bump required version of python{3,}-sqlalchemy to 1.0
+  * Use Python 3 version of Sphinx to builds docs
+  * Bump required version of openstack-pkg-tools to 52~
+  * d/rules
+    - Cleanup and use pkgos-dh_auto_install
+    - Run tests on all Python versions
+  * Removed d/p/disable-failing-test.patch
+    (Not needed anymore)
 
- -- Ondřej Nový <onovy@debian.org>  Wed, 10 Aug 2016 10:34:47 +0200
+ -- Ondřej Nový <onovy@debian.org>  Fri, 12 Aug 2016 22:52:00 +0200
 
 alembic (0.8.7-1) unstable; urgency=medium
 
