@@ -1,3 +1,9 @@
+alembic (0.8.7-2~bpo8+1) jessie-backports; urgency=medium
+
+  * Rebuild for jessie-backports.
+
+ -- Ondřej Nový <onovy@debian.org>  Fri, 19 Aug 2016 21:49:19 +0200
+
 alembic (0.8.7-2) unstable; urgency=medium
 
   * Added python{3,}-editor to build depends
