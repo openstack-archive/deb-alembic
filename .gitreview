@@ -1,6 +1,5 @@
 [gerrit]
-host=gerrit.sqlalchemy.org
-project=zzzeek/alembic
-defaultbranch=master
+host=review.openstack.org
 port=29418
-
+project=openstack/deb-alembic.git
+defaultbranch=debian/newton
