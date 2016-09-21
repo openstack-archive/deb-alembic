@@ -1,3 +1,9 @@
+alembic (0.8.7-3) UNRELEASED; urgency=medium
+
+  * Using OpenStack's Gerrit as VCS URLs.
+
+ -- Ondřej Nový <onovy@debian.org>  Wed, 21 Sep 2016 21:07:38 +0200
+
 alembic (0.8.7-2) unstable; urgency=medium
 
   * Added python{3,}-editor to build depends
