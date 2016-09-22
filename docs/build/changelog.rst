@@ -4,6 +4,33 @@ Changelog
 ==========
 
 .. changelog::
+    :version: 0.8.8
+    :released: September 12, 2016
+
+    .. change::
+       :tags: autogenerate
+
+       The imports in the default script.py.mako are now at the top
+       so that flake8 editors don't complain by default.  PR courtesy
+       Guilherme Mansur.
+
+    .. change::
+      :tags: feature, operations, postgresql
+      :tickets: 292
+
+      Added support for the USING clause to the ALTER COLUMN operation
+      for Postgresql.  Support is via the
+      :paramref:`.op.alter_column.postgresql_using`
+      parameter.  Pull request courtesy Frazer McLean.
+
+    .. change::
+      :tags: feature, autogenerate
+
+      Autogenerate with type comparison enabled will pick up on the timezone
+      setting changing between DateTime types.   Pull request courtesy
+      David Szotten.
+
+.. changelog::
     :version: 0.8.7
     :released: July 26, 2016
 
