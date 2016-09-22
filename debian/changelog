@@ -1,9 +1,9 @@
-alembic (0.8.8-1) UNRELEASED; urgency=medium
+alembic (0.8.8-1) unstable; urgency=medium
 
   * New upstream release
   * Using OpenStack's Gerrit as VCS URLs.
 
- -- Ondřej Nový <onovy@debian.org>  Thu, 22 Sep 2016 19:44:59 +0200
+ -- Ondřej Nový <onovy@debian.org>  Thu, 22 Sep 2016 20:48:21 +0200
 
 alembic (0.8.7-2) unstable; urgency=medium
 
