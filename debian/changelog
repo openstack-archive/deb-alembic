@@ -1,8 +1,12 @@
 alembic (0.8.8-2) UNRELEASED; urgency=medium
 
+  [ Ondřej Nový ]
   * Use correct branch in package VCS
 
- -- Ondřej Nový <onovy@debian.org>  Fri, 23 Sep 2016 14:12:26 +0200
+  [ Thomas Goirand ]
+  * debian/source/options: ignores egg-info and .gitreview.
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 26 Sep 2016 09:06:57 +0200
 
 alembic (0.8.8-1) unstable; urgency=medium
 
