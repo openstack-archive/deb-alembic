@@ -1,3 +1,12 @@
+========================
+Team and repository tags
+========================
+
+.. image:: http://governance.openstack.org/badges/deb-alembic.svg
+    :target: http://governance.openstack.org/reference/tags/index.html
+
+.. Change things from this point on
+
 Alembic is a database migrations tool written by the author
 of `SQLAlchemy <http://www.sqlalchemy.org>`_.  A migrations tool
 offers the following functionality:
