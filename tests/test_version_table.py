@@ -35,8 +35,8 @@ class TestMigrationContext(TestBase):
         self.transaction = self.connection.begin()
 
     def tearDown(self):
-        version_table.drop(self.connection, checkfirst=True)
         self.transaction.rollback()
+        version_table.drop(self.connection, checkfirst=True)
         self.connection.close()
 
     def make_one(self, **kwargs):
@@ -58,11 +58,23 @@ class TestMigrationContext(TestBase):
         context = self.make_one(dialect_name='sqlite',
                                 opts={'version_table': 'explicit'})
         eq_(context._version.name, 'explicit')
+        eq_(context._version.primary_key.name, 'explicit_pkc')
 
     def test_config_explicit_version_table_schema(self):
         context = self.make_one(dialect_name='sqlite',
                                 opts={'version_table_schema': 'explicit'})
         eq_(context._version.schema, 'explicit')
+
+    def test_config_explicit_no_pk(self):
+        context = self.make_one(dialect_name='sqlite',
+                                opts={'version_table_pk': False})
+        eq_(len(context._version.primary_key), 0)
+
+    def test_config_explicit_w_pk(self):
+        context = self.make_one(dialect_name='sqlite',
+                                opts={'version_table_pk': True})
+        eq_(len(context._version.primary_key), 1)
+        eq_(context._version.primary_key.name, "alembic_version_pkc")
 
     def test_get_current_revision_doesnt_create_version_table(self):
         context = self.make_one(connection=self.connection,

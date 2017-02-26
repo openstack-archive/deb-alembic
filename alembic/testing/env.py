@@ -115,7 +115,7 @@ datefmt = %%H:%%M:%%S
 
 
 
-def _multi_dir_testing_config(sourceless=False):
+def _multi_dir_testing_config(sourceless=False, extra_version_location=''):
     dir_ = os.path.join(_get_staging_directory(), 'scripts')
     url = "sqlite:///%s/foo.db" % dir_
 
@@ -124,7 +124,7 @@ def _multi_dir_testing_config(sourceless=False):
 script_location = %s
 sqlalchemy.url = %s
 sourceless = %s
-version_locations = %%(here)s/model1/ %%(here)s/model2/ %%(here)s/model3/
+version_locations = %%(here)s/model1/ %%(here)s/model2/ %%(here)s/model3/ %s
 
 [loggers]
 keys = root
@@ -149,7 +149,8 @@ keys = generic
 [formatter_generic]
 format = %%(levelname)-5.5s [%%(name)s] %%(message)s
 datefmt = %%H:%%M:%%S
-    """ % (dir_, url, "true" if sourceless else "false"))
+    """ % (dir_, url, "true" if sourceless else "false",
+           extra_version_location))
 
 
 def _no_sql_testing_config(dialect="postgresql", directives=""):
@@ -256,8 +257,10 @@ down_revision = None
 
 from alembic import op
 
+
 def upgrade():
     op.execute("CREATE STEP 1")
+
 
 def downgrade():
     op.execute("DROP STEP 1")
@@ -272,8 +275,10 @@ down_revision = '%s'
 
 from alembic import op
 
+
 def upgrade():
     op.execute("CREATE STEP 2")
+
 
 def downgrade():
     op.execute("DROP STEP 2")
@@ -288,8 +293,10 @@ down_revision = '%s'
 
 from alembic import op
 
+
 def upgrade():
     op.execute("CREATE STEP 3")
+
 
 def downgrade():
     op.execute("DROP STEP 3")

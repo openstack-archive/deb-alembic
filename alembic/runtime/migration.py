@@ -2,7 +2,8 @@ import logging
 import sys
 from contextlib import contextmanager
 
-from sqlalchemy import MetaData, Table, Column, String, literal_column
+from sqlalchemy import MetaData, Table, Column, String, literal_column,\
+    PrimaryKeyConstraint
 from sqlalchemy.engine.strategies import MockEngineStrategy
 from sqlalchemy.engine import url as sqla_url
 
@@ -98,6 +99,12 @@ class MigrationContext(object):
             version_table, MetaData(),
             Column('version_num', String(32), nullable=False),
             schema=version_table_schema)
+        if opts.get("version_table_pk", True):
+            self._version.append_constraint(
+                PrimaryKeyConstraint(
+                    'version_num', name="%s_pkc" % version_table
+                )
+            )
 
         self._start_from_rev = opts.get("starting_rev")
         self.impl = ddl.DefaultImpl.get_by_dialect(dialect)(
@@ -230,7 +237,9 @@ class MigrationContext(object):
         """
         if self.as_sql:
             start_from_rev = self._start_from_rev
-            if start_from_rev is not None and self.script:
+            if start_from_rev == 'base':
+                start_from_rev = None
+            elif start_from_rev is not None and self.script:
                 start_from_rev = \
                     self.script.get_revision(start_from_rev).revision
 

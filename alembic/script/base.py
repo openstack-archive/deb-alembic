@@ -9,8 +9,8 @@ from ..runtime import migration
 
 from contextlib import contextmanager
 
-_sourceless_rev_file = re.compile(r'(?!__init__)(.*\.py)(c|o)?$')
-_only_source_rev_file = re.compile(r'(?!__init__)(.*\.py)$')
+_sourceless_rev_file = re.compile(r'(?!\.\#|__init__)(.*\.py)(c|o)?$')
+_only_source_rev_file = re.compile(r'(?!\.\#|__init__)(.*\.py)$')
 _legacy_rev = re.compile(r'([a-f0-9]+)\.py$')
 _mod_def_re = re.compile(r'(upgrade|downgrade)_([a-z0-9]+)')
 _slug_re = re.compile(r'\w+')
@@ -82,8 +82,17 @@ class ScriptDirectory(object):
         else:
             paths = [self.versions]
 
+        dupes = set()
         for vers in paths:
             for file_ in os.listdir(vers):
+                path = os.path.realpath(os.path.join(vers, file_))
+                if path in dupes:
+                    util.warn(
+                        "File %s loaded twice! ignoring. Please ensure "
+                        "version_locations is unique." % path
+                    )
+                    continue
+                dupes.add(path)
                 script = Script._from_filename(self, vers, file_)
                 if script is None:
                     continue

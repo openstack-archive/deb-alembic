@@ -640,7 +640,7 @@ class PGUniqueIndexTest(AutogenerateUniqueIndexTest):
         eq_(diffs[0][1].name, "uq_name")
         eq_(len(diffs), 1)
 
-    def test_functional_ix(self):
+    def test_functional_ix_one(self):
         m1 = MetaData()
         m2 = MetaData()
 
@@ -665,6 +665,37 @@ class PGUniqueIndexTest(AutogenerateUniqueIndexTest):
             diffs = self._fixture(m1, m2)
         eq_(diffs, [])
 
+    def test_functional_ix_two(self):
+        m1 = MetaData()
+        m2 = MetaData()
+
+        t1 = Table(
+            'foo', m1,
+            Column('id', Integer, primary_key=True),
+            Column('email', String(50)),
+            Column('name', String(50))
+        )
+        Index(
+            "email_idx",
+            func.coalesce(t1.c.email, t1.c.name).desc(), unique=True)
+
+        t2 = Table(
+            'foo', m2,
+            Column('id', Integer, primary_key=True),
+            Column('email', String(50)),
+            Column('name', String(50))
+        )
+        Index(
+            "email_idx",
+            func.coalesce(t2.c.email, t2.c.name).desc(), unique=True)
+
+        with assertions.expect_warnings(
+                "Skipped unsupported reflection",
+                "autogenerate skipping functional index"
+        ):
+            diffs = self._fixture(m1, m2)
+        eq_(diffs, [])
+
 
 class MySQLUniqueIndexTest(AutogenerateUniqueIndexTest):
     reports_unnamed_constraints = True
@@ -679,6 +710,12 @@ class MySQLUniqueIndexTest(AutogenerateUniqueIndexTest):
             assert True
         else:
             assert False, "unexpected success"
+
+
+class OracleUniqueIndexTest(AutogenerateUniqueIndexTest):
+    reports_unnamed_constraints = True
+    reports_unique_constraints_as_indexes = True
+    __only_on__ = "oracle"
 
 
 class NoUqReflectionIndexTest(NoUqReflection, AutogenerateUniqueIndexTest):

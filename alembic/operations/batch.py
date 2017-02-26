@@ -1,5 +1,5 @@
 from sqlalchemy import Table, MetaData, Index, select, Column, \
-    ForeignKeyConstraint, cast, CheckConstraint
+    ForeignKeyConstraint, PrimaryKeyConstraint, cast, CheckConstraint
 from sqlalchemy import types as sqltypes
 from sqlalchemy import schema as sql_schema
 from sqlalchemy.util import OrderedDict
@@ -301,6 +301,10 @@ class ApplyBatchImpl(object):
                 existing.type._create_events = \
                     existing.type.create_constraint = False
 
+            if existing.type._type_affinity is not type_._type_affinity:
+                existing_transfer["expr"] = cast(
+                    existing_transfer["expr"], type_)
+
             existing.type = type_
 
             # we *dont* however set events for the new type, because
@@ -308,7 +312,6 @@ class ApplyBatchImpl(object):
             # Operations.implementation_for(alter_column) which already
             # will emit an add_constraint()
 
-            existing_transfer["expr"] = cast(existing_transfer["expr"], type_)
         if nullable is not None:
             existing.nullable = nullable
         if server_default is not False:
@@ -342,7 +345,7 @@ class ApplyBatchImpl(object):
         if not const.name:
             raise ValueError("Constraint must have a name")
         try:
-            del self.named_constraints[const.name]
+            const = self.named_constraints.pop(const.name)
         except KeyError:
             if _is_type_bound(const):
                 # type-bound constraints are only included in the new
@@ -351,6 +354,10 @@ class ApplyBatchImpl(object):
                 # Operations.implementation_for(alter_column)
                 return
             raise ValueError("No such constraint: '%s'" % const.name)
+        else:
+            if isinstance(const, PrimaryKeyConstraint):
+                for col in const.columns:
+                    self.columns[col.name].primary_key = False
 
     def create_index(self, idx):
         self.new_indexes[idx.name] = idx

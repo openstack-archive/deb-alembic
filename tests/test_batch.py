@@ -13,9 +13,9 @@ from alembic.runtime.migration import MigrationContext
 
 from sqlalchemy import Integer, Table, Column, String, MetaData, ForeignKey, \
     UniqueConstraint, ForeignKeyConstraint, Index, Boolean, CheckConstraint, \
-    Enum
+    Enum, DateTime, PrimaryKeyConstraint
 from sqlalchemy.engine.reflection import Inspector
-from sqlalchemy.sql import column, text
+from sqlalchemy.sql import column, text, select
 from sqlalchemy.schema import CreateTable, CreateIndex
 from sqlalchemy import exc
 
@@ -57,6 +57,17 @@ class BatchApplyTest(TestBase):
             Index('ix1', 'y')
         )
         return ApplyBatchImpl(t, table_args, table_kwargs, False)
+
+    def _pk_fixture(self):
+        m = MetaData()
+        t = Table(
+            'tname', m,
+            Column('id', Integer),
+            Column('x', String()),
+            Column('y', Integer),
+            PrimaryKeyConstraint('id', name="mypk")
+        )
+        return ApplyBatchImpl(t, (), {}, False)
 
     def _literal_ck_fixture(
             self, copy_from=None, table_args=(), table_kwargs={}):
@@ -215,6 +226,7 @@ class BatchApplyTest(TestBase):
             impl.new_table.c[name].name
             for name in colnames
             if name in impl.table.c])
+
         args['tname_colnames'] = ", ".join(
             "CAST(%(schema)stname.%(name)s AS %(type)s) AS anon_1" % {
                 'schema': args['schema'],
@@ -243,9 +255,9 @@ class BatchApplyTest(TestBase):
 
     def test_change_type(self):
         impl = self._simple_fixture()
-        impl.alter_column('tname', 'x', type_=Integer)
+        impl.alter_column('tname', 'x', type_=String)
         new_table = self._assert_impl(impl)
-        assert new_table.c.x.type._type_affinity is Integer
+        assert new_table.c.x.type._type_affinity is String
 
     def test_rename_col(self):
         impl = self._simple_fixture()
@@ -533,6 +545,14 @@ class BatchApplyTest(TestBase):
             dialect='mysql'
         )
 
+    def test_drop_pk(self):
+        impl = self._pk_fixture()
+        pk = self.op.schema_obj.primary_key_constraint("mypk", "tname", ["id"])
+        impl.drop_constraint(pk)
+        new_table = self._assert_impl(impl)
+        assert not new_table.c.id.primary_key
+        assert not len(new_table.primary_key)
+
 
 class BatchAPITest(TestBase):
     __requires__ = ('sqlalchemy_08', )
@@ -751,7 +771,6 @@ class CopyFromTest(TestBase):
         with self.op.batch_alter_table(
                 "foo", copy_from=self.table) as batch_op:
             batch_op.alter_column('data', type_=Integer)
-
         context.assert_(
             'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
             'data INTEGER, x INTEGER, PRIMARY KEY (id))',
@@ -889,7 +908,7 @@ class CopyFromTest(TestBase):
             'CREATE TABLE _alembic_batch_temp (id INTEGER NOT NULL, '
             'data VARCHAR, x INTEGER, PRIMARY KEY (id))',
             'INSERT INTO _alembic_batch_temp (id, data, x) SELECT foo.id, '
-            'CAST(foo.data AS VARCHAR) AS anon_1, foo.x FROM foo',
+            'foo.data, foo.x FROM foo',
             'DROP TABLE foo',
             'ALTER TABLE _alembic_batch_temp RENAME TO foo'
         )
@@ -970,6 +989,14 @@ class BatchRoundTripTest(TestBase):
         )
         t.create(self.conn)
 
+    def _timestamp_fixture(self):
+        t = Table(
+            'hasts', self.metadata,
+            Column('x', DateTime()),
+        )
+        t.create(self.conn)
+        return t
+
     def _int_to_boolean_fixture(self):
         t = Table(
             'hasbool', self.metadata,
@@ -991,6 +1018,23 @@ class BatchRoundTripTest(TestBase):
             [c['type']._type_affinity for c in insp.get_columns('hasbool')
              if c['name'] == 'x'],
             [Integer]
+        )
+
+    def test_no_net_change_timestamp(self):
+        t = self._timestamp_fixture()
+
+        import datetime
+        self.conn.execute(
+            t.insert(),
+            {"x": datetime.datetime(2012, 5, 18, 15, 32, 5)}
+        )
+
+        with self.op.batch_alter_table("hasts") as batch_op:
+            batch_op.alter_column("x", type_=DateTime())
+
+        eq_(
+            self.conn.execute(select([t.c.x])).fetchall(),
+            [(datetime.datetime(2012, 5, 18, 15, 32, 5),)]
         )
 
     def test_drop_col_schematype(self):
