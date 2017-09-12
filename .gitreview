@@ -1,6 +1,0 @@
-[gerrit]
-host=gerrit.sqlalchemy.org
-project=zzzeek/alembic
-defaultbranch=master
-port=29418
-
